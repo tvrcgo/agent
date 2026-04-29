@@ -7,7 +7,7 @@ WORKDIR /app
 COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-dev
 
-COPY src/ src/
+COPY agent/ agent/
 COPY config.yml AGENTS.md ./
 
 CMD ["uv", "run", "python", "-m", "agent"]
