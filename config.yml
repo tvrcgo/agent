@@ -1,0 +1,13 @@
+model:
+  provider: openai
+  name: gpt-4o
+  base_url: https://api.openai.com/v1
+  api_key: ${OPENAI_API_KEY}
+
+agent:
+  window_size: 50
+  max_iterations: 100
+
+ws:
+  host: 0.0.0.0
+  port: 8765
