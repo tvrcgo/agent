@@ -32,6 +32,27 @@ class Config(BaseModel):
     ws: WSConfig = WSConfig()
 
 
+def _load_dotenv(path: str | Path = ".env") -> None:
+    """Load environment variables from a .env file if it exists."""
+    p = Path(path)
+    if not p.exists():
+        return
+    for line in p.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if "=" in line:
+            key, _, value = line.partition("=")
+            key = key.strip()
+            value = value.strip()
+            if (value.startswith("'") and value.endswith("'")) or (
+                value.startswith('"') and value.endswith('"')
+            ):
+                value = value[1:-1]
+            if key and key not in os.environ:
+                os.environ[key] = value
+ 
+
 def _expand_env_vars(value: Any) -> Any:
     """Recursively expand ${VAR} references in string values."""
     if isinstance(value, str):
@@ -48,6 +69,7 @@ def _expand_env_vars(value: Any) -> Any:
 
 
 def load_config(path: str | Path = "config.yml") -> Config:
+    _load_dotenv()
     p = Path(path)
     if not p.exists():
         return Config()

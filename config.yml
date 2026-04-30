@@ -1,8 +1,8 @@
 model:
   provider: openai
-  name: gpt-4o
-  base_url: https://api.openai.com/v1
-  api_key: ${OPENAI_API_KEY}
+  name: deepseek-v4-pro
+  base_url: https://api.deepseek.com
+  api_key: ${DEEPSEEK_API_KEY}
 
 agent:
   window_size: 50
