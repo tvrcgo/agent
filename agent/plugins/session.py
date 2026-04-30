@@ -9,7 +9,7 @@ from agent.core.plugin import Plugin, PluginRegistry, PluginContext
 from agent.core.llm import Message, ToolCall
 
 if TYPE_CHECKING:
-    from agent.config import Config
+    from agent.core.config import Config
 
 logger = logging.getLogger(__name__)
 

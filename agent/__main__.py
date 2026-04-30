@@ -4,7 +4,7 @@ import asyncio
 import logging
 from pathlib import Path
 
-from agent.config import load_config
+from agent.core.config import load_config
 from agent.core.loop import AgentLoop
 from agent.core.plugin import PluginRegistry
 from agent.core.skill import SkillRegistry
