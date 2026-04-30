@@ -6,13 +6,118 @@ from pathlib import Path
 from typing import Any, TYPE_CHECKING
 
 from agent.core.plugin import Plugin, PluginRegistry, PluginContext
-from agent.plugins.memory import ShortTermMemory
-from agent.providers.base import Message
+from agent.core.llm import Message, ToolCall
 
 if TYPE_CHECKING:
     from agent.config import Config
 
 logger = logging.getLogger(__name__)
+
+
+class SessionMemory:
+    """Sliding-window short-term memory with compression support.
+
+    Keeps the most recent messages within window_size for storage,
+    and limits context sent to LLM via max_context_messages.
+    When estimated tokens exceed max_tokens * compress_threshold,
+    older messages are compacted into a summary.
+    """
+
+    def __init__(
+        self,
+        window_size: int = 50,
+        max_context_messages: int = 100,
+        max_tokens: int = 65536,
+        compress_threshold: float = 0.9,
+        keep_recent: int = 10,
+    ) -> None:
+        self._window_size = window_size
+        self._max_context_messages = max_context_messages
+        self._max_tokens = max_tokens
+        self._compress_threshold = compress_threshold
+        self._keep_recent = keep_recent
+        self._messages: list[Message] = []
+        self._system_prompt: Message | None = None
+        self._last_prompt_tokens: int = 0
+
+    def set_system_prompt(self, content: str) -> None:
+        self._system_prompt = Message(role="system", content=content)
+
+    def add_user_message(self, content: str) -> None:
+        self._messages.append(Message(role="user", content=content))
+        self._trim()
+
+    def add_assistant_message(
+        self,
+        content: str | None = None,
+        thinking: str | None = None,
+        tool_calls: list[ToolCall] | None = None,
+    ) -> None:
+        self._messages.append(
+            Message(
+                role="assistant",
+                content=content,
+                thinking=thinking,
+                tool_calls=tool_calls,
+            )
+        )
+        self._trim()
+
+    def add_tool_result(self, tool_call: ToolCall, result: str) -> None:
+        self._messages.append(
+            Message(role="tool", content=result, tool_call_id=tool_call.id)
+        )
+        self._trim()
+
+    def get_messages(self) -> list[Message]:
+        msgs: list[Message] = []
+        if self._system_prompt:
+            msgs.append(self._system_prompt)
+        recent = self._messages[-self._max_context_messages:]
+        msgs.extend(recent)
+        return msgs
+
+    def clear(self) -> None:
+        self._messages.clear()
+
+    def _trim(self) -> None:
+        if len(self._messages) > self._window_size:
+            overflow = len(self._messages) - self._window_size
+            self._messages = self._messages[overflow:]
+
+    # --- Token estimation and compression ---
+
+    def set_last_prompt_tokens(self, n: int) -> None:
+        self._last_prompt_tokens = n
+
+    def estimate_tokens(self) -> int:
+        if self._last_prompt_tokens > 0:
+            return self._last_prompt_tokens
+        total_chars = 0
+        for msg in self.get_messages():
+            if msg.content:
+                total_chars += len(msg.content)
+            if msg.thinking:
+                total_chars += len(msg.thinking)
+            if msg.tool_calls:
+                for tc in msg.tool_calls:
+                    total_chars += len(tc.name) + len(str(tc.arguments))
+        return total_chars // 4
+
+    def needs_compression(self) -> bool:
+        return self.estimate_tokens() >= int(self._max_tokens * self._compress_threshold)
+
+    def compact(self, summary: str) -> None:
+        if len(self._messages) <= self._keep_recent:
+            return
+        split_point = len(self._messages) - self._keep_recent
+        recent = self._messages[split_point:]
+        summary_msg = Message(
+            role="user",
+            content=f"[Previous conversation summary]\n{summary}",
+        )
+        self._messages = [summary_msg] + recent
+        self._last_prompt_tokens = 0
 
 
 class SessionPlugin(Plugin):
@@ -27,10 +132,14 @@ class SessionPlugin(Plugin):
 
     def __init__(self) -> None:
         self._base_path = Path(self.MEMORY_PATH)
-        self._sessions: dict[str, ShortTermMemory] = {}
+        self._sessions: dict[str, SessionMemory] = {}
         self._active_session_id: str | None = None
-        self._default_memory: ShortTermMemory | None = None
+        self._default_memory: SessionMemory | None = None
         self._window_size: int = 50
+        self._max_context_messages: int = 100
+        self._max_tokens: int = 65536
+        self._compress_threshold: float = 0.9
+        self._keep_recent: int = 10
 
     def register(self, registry: PluginRegistry) -> None:
         """Register lifecycle hooks."""
@@ -46,10 +155,14 @@ class SessionPlugin(Plugin):
     def init(self, config: Config) -> None:
         """Initialize with config."""
         self._window_size = config.agent.window_size
+        self._max_context_messages = config.agent.max_context_messages
+        self._max_tokens = config.agent.max_tokens
+        self._compress_threshold = config.agent.compress_threshold
+        self._keep_recent = config.agent.keep_recent
         self._base_path.mkdir(parents=True, exist_ok=True)
 
         # Create default memory with system prompt
-        self._default_memory = ShortTermMemory(window_size=self._window_size)
+        self._default_memory = self._make_memory()
         prompt_path = Path(config.agent.system_prompt_path)
         if prompt_path.exists():
             self._default_memory.set_system_prompt(prompt_path.read_text(encoding="utf-8"))
@@ -84,8 +197,11 @@ class SessionPlugin(Plugin):
             self._get_active_memory().add_user_message(task)
 
     async def _on_before_llm(self, ctx: PluginContext) -> None:
-        """Provide messages to the loop via ctx.data."""
-        ctx.data["messages"] = self._get_active_memory().get_messages()
+        """Provide messages to the loop via ctx.data, compressing if needed."""
+        memory = self._get_active_memory()
+        if memory.needs_compression():
+            await self._compress(ctx, memory)
+        ctx.data["messages"] = memory.get_messages()
 
     async def _on_after_llm(self, ctx: PluginContext) -> None:
         """Record assistant response into session memory."""
@@ -97,6 +213,8 @@ class SessionPlugin(Plugin):
             thinking=response.thinking,
             tool_calls=response.tool_calls,
         )
+        if response.usage:
+            self._get_active_memory().set_last_prompt_tokens(response.usage.prompt_tokens)
 
     async def _on_after_tool(self, ctx: PluginContext) -> None:
         """Record tool result into session memory."""
@@ -124,11 +242,20 @@ class SessionPlugin(Plugin):
         if session_id not in self._sessions:
             self._sessions[session_id] = self._load_session(session_id)
 
-    def _get_active_memory(self) -> ShortTermMemory:
+    def _get_active_memory(self) -> SessionMemory:
         """Return the memory for the currently active session (or default)."""
         if self._active_session_id and self._active_session_id in self._sessions:
             return self._sessions[self._active_session_id]
-        return self._default_memory or ShortTermMemory()
+        return self._default_memory or self._make_memory()
+
+    def _make_memory(self) -> SessionMemory:
+        return SessionMemory(
+            window_size=self._window_size,
+            max_context_messages=self._max_context_messages,
+            max_tokens=self._max_tokens,
+            compress_threshold=self._compress_threshold,
+            keep_recent=self._keep_recent,
+        )
 
     def persist_active(self) -> None:
         """Persist the currently active session to disk."""
@@ -138,11 +265,63 @@ class SessionPlugin(Plugin):
                 self._sessions[self._active_session_id],
             )
 
+    async def _compress(self, ctx: PluginContext, memory: SessionMemory) -> None:
+        """Summarize older messages via LLM and compact the memory."""
+        llm = ctx.llm
+        if llm is None:
+            logger.warning("No llm in context, skipping compression")
+            return
+
+        all_messages = memory.get_messages()
+        # Skip system prompt (index 0), keep recent messages, compress the middle
+        if len(all_messages) <= memory._keep_recent + 1:
+            return
+
+        old = all_messages[1:-memory._keep_recent]  # between system prompt and recent
+        if not old:
+            return
+
+        formatted = self._format_for_summary(old)
+        summary_prompt = [
+            Message(
+                role="system",
+                content=(
+                    "You are a conversation summarizer. Summarize the following conversation "
+                    "history concisely, preserving all key facts, decisions, actions taken, "
+                    "and their results. Output only the summary, no preamble."
+                ),
+            ),
+            Message(role="user", content=formatted),
+        ]
+
+        try:
+            response = await llm.chat(summary_prompt, tools=None)
+            if response.text:
+                memory.compact(response.text)
+                logger.info("Session compressed: %d messages -> summary + %d recent",
+                            len(old), memory._keep_recent)
+        except Exception:
+            logger.warning("Compression failed, falling back to sliding window", exc_info=True)
+
+    @staticmethod
+    def _format_for_summary(messages: list[Message]) -> str:
+        lines: list[str] = []
+        for msg in messages:
+            role = msg.role
+            content = msg.content or ""
+            if role == "tool" and len(content) > 500:
+                content = content[:500] + "..."
+            if msg.tool_calls:
+                tc_names = [tc.name for tc in msg.tool_calls]
+                content = f"[called: {', '.join(tc_names)}] " + content
+            lines.append(f"[{role}] {content}")
+        return "\n".join(lines)
+
     def _session_file(self, session_id: str) -> Path:
         return self._base_path / f"{session_id}.jsonl"
 
-    def _load_session(self, session_id: str) -> ShortTermMemory:
-        """Load a session from disk, or return a fresh ShortTermMemory."""
+    def _load_session(self, session_id: str) -> SessionMemory:
+        """Load a session from disk, or return a fresh SessionMemory."""
         path = self._session_file(session_id)
         if path.exists():
             try:
@@ -151,7 +330,7 @@ class SessionPlugin(Plugin):
                     line = line.strip()
                     if line:
                         messages.append(self._deserialize_message(json.loads(line)))
-                memory = ShortTermMemory(window_size=self._window_size)
+                memory = self._make_memory()
                 for msg in messages:
                     if msg.role == "system":
                         memory.set_system_prompt(msg.content or "")
@@ -161,9 +340,9 @@ class SessionPlugin(Plugin):
                 return memory
             except Exception:
                 logger.warning("Failed to load session %s, starting fresh", session_id, exc_info=True)
-        return ShortTermMemory(window_size=self._window_size)
+        return self._make_memory()
 
-    def _save_session(self, session_id: str, memory: ShortTermMemory) -> None:
+    def _save_session(self, session_id: str, memory: SessionMemory) -> None:
         """Save a session to disk as JSONL (one message per line)."""
         path = self._session_file(session_id)
         try:
@@ -191,7 +370,7 @@ class SessionPlugin(Plugin):
 
     @staticmethod
     def _deserialize_message(d: dict[str, Any]) -> Message:
-        from agent.providers.base import ToolCall
+        from agent.core.llm import ToolCall
 
         tool_calls = None
         if "tool_calls" in d:

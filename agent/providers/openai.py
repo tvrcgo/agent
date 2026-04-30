@@ -6,7 +6,7 @@ from typing import Any
 import httpx
 
 from agent.core.skill import ToolDefinition
-from agent.providers.base import LLMProvider, LLMResponse, Message, ToolCall, Usage
+from agent.core.llm import LLMProvider, LLMResponse, Message, ToolCall, Usage
 
 
 class OpenAIProvider(LLMProvider):

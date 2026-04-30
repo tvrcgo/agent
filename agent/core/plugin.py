@@ -10,6 +10,7 @@ from typing import Any, Callable, Awaitable, TYPE_CHECKING
 if TYPE_CHECKING:
     from agent.core.ws import ClientSession
     from agent.config import Config
+    from agent.core.llm import LLMProvider
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +28,7 @@ class PluginContext:
     session_id: str | None
     client: ClientSession
     data: dict[str, Any] = field(default_factory=dict)
+    llm: LLMProvider | None = None
 
 
 PluginHandler = Callable[[PluginContext], Awaitable[None]]

@@ -7,6 +7,10 @@ model:
 agent:
   window_size: 50
   max_iterations: 100
+  max_context_messages: 100
+  max_tokens: 65536
+  compress_threshold: 0.9
+  keep_recent: 10
 
 ws:
   host: 0.0.0.0

@@ -29,8 +29,8 @@ async def main() -> None:
     config = load_config()
     logger.info("Config loaded: model=%s, ws=%s:%d", config.model.name, config.ws.host, config.ws.port)
 
-    # Provider
-    provider = OpenAIProvider(
+    # LLM
+    llm = OpenAIProvider(
         base_url=config.model.base_url,
         api_key=config.model.api_key,
         model=config.model.name,
@@ -48,7 +48,7 @@ async def main() -> None:
 
     # Agent loop
     loop = AgentLoop(
-        provider=provider,
+        llm=llm,
         skills=skills,
         plugins=plugins,
         max_iterations=config.agent.max_iterations,
@@ -69,7 +69,7 @@ async def main() -> None:
     finally:
         await ws.stop()
         plugins.shutdown_all()
-        await provider.close()
+        await llm.close()
         logger.info("Agent shut down.")
 
 

@@ -18,7 +18,7 @@ from agent.core.ws import (
     ToolResultEvent,
     UserMessage,
 )
-from agent.providers.base import LLMProvider, LLMResponse, ToolCall
+from agent.core.llm import LLMProvider, LLMResponse, ToolCall
 
 logger = logging.getLogger(__name__)
 
@@ -34,12 +34,12 @@ class AgentLoop:
 
     def __init__(
         self,
-        provider: LLMProvider,
+        llm: LLMProvider,
         skills: SkillRegistry,
         plugins: PluginRegistry,
         max_iterations: int = 100,
     ) -> None:
-        self._provider = provider
+        self._llm = llm
         self._skills = skills
         self._plugins = plugins
         self._max_iterations = max_iterations
@@ -104,11 +104,12 @@ class AgentLoop:
 
                 # Think
                 await ctx.client.emit(StatusEvent(state="thinking"))
+                ctx.llm = self._llm
                 await self._plugins.emit("before_llm", ctx)
 
                 messages = ctx.data.get("messages", [])
                 tools = self._skills.get_definitions()
-                response: LLMResponse = await self._provider.chat(
+                response: LLMResponse = await self._llm.chat(
                     messages=messages,
                     tools=tools if tools else None,
                 )
