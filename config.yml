@@ -11,3 +11,11 @@ agent:
 ws:
   host: 0.0.0.0
   port: 8765
+
+skills:
+  modules:
+    - agent.skills.echo
+
+plugins:
+  modules:
+    - agent.plugins.session

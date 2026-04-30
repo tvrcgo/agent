@@ -4,7 +4,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any
 
-from agent.core.plugin import ToolDefinition
+from agent.core.skill import ToolDefinition
 
 
 @dataclass

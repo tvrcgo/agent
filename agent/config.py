@@ -19,6 +19,7 @@ class ModelConfig(BaseModel):
 class AgentConfig(BaseModel):
     window_size: int = 50
     max_iterations: int = 100
+    system_prompt_path: str = "AGENTS.md"
 
 
 class WSConfig(BaseModel):
@@ -26,10 +27,20 @@ class WSConfig(BaseModel):
     port: int = 8765
 
 
+class SkillsConfig(BaseModel):
+    modules: list[str] = []  # e.g. ["agent.skills.echo", "my_skills.weather"]
+
+
+class PluginsConfig(BaseModel):
+    modules: list[str] = []  # e.g. ["agent.plugins.session"]
+
+
 class Config(BaseModel):
     model: ModelConfig = ModelConfig()
     agent: AgentConfig = AgentConfig()
     ws: WSConfig = WSConfig()
+    skills: SkillsConfig = SkillsConfig()
+    plugins: PluginsConfig = PluginsConfig()
 
 
 def _load_dotenv(path: str | Path = ".env") -> None:
@@ -37,7 +48,7 @@ def _load_dotenv(path: str | Path = ".env") -> None:
     p = Path(path)
     if not p.exists():
         return
-    for line in p.read_text().splitlines():
+    for line in p.read_text(encoding="utf-8-sig").splitlines():
         line = line.strip()
         if not line or line.startswith("#"):
             continue
@@ -72,7 +83,10 @@ def load_config(path: str | Path = "config.yml") -> Config:
     _load_dotenv()
     p = Path(path)
     if not p.exists():
-        return Config()
-    raw = yaml.safe_load(p.read_text()) or {}
-    expanded = _expand_env_vars(raw)
-    return Config(**expanded)
+        config = Config()
+    else:
+        raw = yaml.safe_load(p.read_text()) or {}
+        expanded = _expand_env_vars(raw)
+        config = Config(**expanded)
+
+    return config

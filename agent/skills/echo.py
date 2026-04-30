@@ -2,11 +2,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from agent.core.plugin import Skill, ToolDefinition
+from agent.core.skill import Skill, ToolDefinition
 
 
 class EchoSkill(Skill):
-    """A simple echo skill for testing the plugin system."""
+    """A simple echo skill for testing."""
 
     name = "echo"
 

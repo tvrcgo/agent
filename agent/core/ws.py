@@ -6,6 +6,7 @@ import logging
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Callable, Coroutine
+from urllib.parse import parse_qs, urlparse
 
 import websockets
 from websockets.asyncio.server import Server, ServerConnection
@@ -46,15 +47,6 @@ class ToolResultEvent:
 
 
 @dataclass
-class ConfirmEvent:
-    id: str
-    title: str
-    description: str
-    actions: list[dict[str, str]] = field(default_factory=list)
-    type: str = "confirm"
-
-
-@dataclass
 class StatusEvent:
     state: str  # "thinking" | "acting" | "waiting" | "idle" | "done"
     type: str = "status"
@@ -72,7 +64,6 @@ AgentEvent = (
     | MessageEvent
     | ToolCallEvent
     | ToolResultEvent
-    | ConfirmEvent
     | StatusEvent
     | ErrorEvent
 )
@@ -103,17 +94,11 @@ class UserMessage:
 
 
 @dataclass
-class ConfirmResponse:
-    id: str
-    action_id: str
-
-
-@dataclass
 class CancelMessage:
     pass
 
 
-IncomingMessage = TaskMessage | UserMessage | ConfirmResponse | CancelMessage
+IncomingMessage = TaskMessage | UserMessage | CancelMessage
 
 
 def _parse_incoming(raw: str) -> IncomingMessage:
@@ -126,8 +111,6 @@ def _parse_incoming(raw: str) -> IncomingMessage:
             return TaskMessage(content=payload["content"])
         case "message":
             return UserMessage(content=payload["content"])
-        case "confirm_response":
-            return ConfirmResponse(id=payload["id"], action_id=payload["action_id"])
         case "cancel":
             return CancelMessage()
         case _:
@@ -137,6 +120,7 @@ def _parse_incoming(raw: str) -> IncomingMessage:
 # --- WebSocket Server ---
 
 MessageHandler = Callable[[IncomingMessage, "ClientSession"], Coroutine[Any, Any, None]]
+ConnectHandler = Callable[["ClientSession"], Coroutine[Any, Any, None]]
 
 
 class ClientSession:
@@ -144,35 +128,10 @@ class ClientSession:
 
     def __init__(self, ws: ServerConnection) -> None:
         self._ws = ws
-        self._confirm_futures: dict[str, asyncio.Future[str]] = {}
+        self.session_id: str | None = None
 
     async def emit(self, event: AgentEvent) -> None:
         await self._ws.send(_serialize_event(event))
-
-    async def request_confirm(
-        self,
-        confirm_id: str,
-        title: str,
-        description: str,
-        actions: list[dict[str, str]],
-    ) -> str:
-        """Send a confirm event and wait for user response. Returns action_id."""
-        future: asyncio.Future[str] = asyncio.get_event_loop().create_future()
-        self._confirm_futures[confirm_id] = future
-        await self.emit(
-            ConfirmEvent(
-                id=confirm_id,
-                title=title,
-                description=description,
-                actions=actions,
-            )
-        )
-        return await future
-
-    def resolve_confirm(self, confirm_id: str, action_id: str) -> None:
-        future = self._confirm_futures.pop(confirm_id, None)
-        if future and not future.done():
-            future.set_result(action_id)
 
 
 class WebSocketServer:
@@ -183,9 +142,13 @@ class WebSocketServer:
         self._port = port
         self._server: Server | None = None
         self._handler: MessageHandler | None = None
+        self._connect_handler: ConnectHandler | None = None
 
     def on_message(self, handler: MessageHandler) -> None:
         self._handler = handler
+
+    def on_connect(self, handler: ConnectHandler) -> None:
+        self._connect_handler = handler
 
     async def start(self) -> None:
         self._server = await websockets.serve(
@@ -202,18 +165,31 @@ class WebSocketServer:
 
     async def _handle_connection(self, ws: ServerConnection) -> None:
         session = ClientSession(ws)
-        logger.info(f"Client connected: {ws.remote_address}")
+
+        # Extract session_id from query string: ws://host:port?session_id=xxx
+        request_path = ws.request.path if ws.request else ""
+        parsed = urlparse(str(request_path))
+        qs = parse_qs(parsed.query)
+        session.session_id = qs.get("session_id", [None])[0]
+
+        logger.info(f"Client connected: {ws.remote_address}, session_id={session.session_id}")
+
+        # Notify connection handler (loads session context)
+        if self._connect_handler:
+            try:
+                await self._connect_handler(session)
+            except Exception:
+                logger.warning("Connect handler error", exc_info=True)
+
         try:
             async for raw in ws:
                 try:
                     msg = _parse_incoming(str(raw))
-                    if isinstance(msg, ConfirmResponse):
-                        session.resolve_confirm(msg.id, msg.action_id)
-                    elif self._handler:
+                    if self._handler:
                         await self._handler(msg, session)
                 except (json.JSONDecodeError, ValueError, KeyError) as e:
                     await session.emit(ErrorEvent(code="parse_error", message=str(e)))
         except websockets.ConnectionClosed:
             pass
         finally:
-            logger.info(f"Client disconnected: {ws.remote_address}")
+            logger.info(f"Client disconnected: {ws.remote_address}, session_id={session.session_id}")

@@ -5,4 +5,6 @@ services:
       - "8765:8765"
     environment:
       - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
+    volumes:
+      - ${MEMORY_PATH}:/agent/memory
     restart: unless-stopped

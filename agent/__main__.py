@@ -6,11 +6,10 @@ from pathlib import Path
 
 from agent.config import load_config
 from agent.core.loop import AgentLoop
-from agent.core.memory import ShortTermMemory
 from agent.core.plugin import PluginRegistry
+from agent.core.skill import SkillRegistry
 from agent.core.ws import WebSocketServer
 from agent.providers.openai import OpenAIProvider
-from agent.skills.echo import EchoSkill
 
 logging.basicConfig(
     level=logging.INFO,
@@ -37,31 +36,27 @@ async def main() -> None:
         model=config.model.name,
     )
 
-    # Plugin registry
-    registry = PluginRegistry()
+    # Skills (tools for LLM)
+    skills = SkillRegistry()
+    if config.skills.modules:
+        skills.load_modules(config.skills.modules)
 
-    # Memory (registered as plugin)
-    memory = ShortTermMemory(window_size=config.agent.window_size)
-    system_prompt = load_system_prompt()
-    if system_prompt:
-        memory.set_system_prompt(system_prompt)
-    registry.register(memory)
-
-    # Skills
-    registry.register(EchoSkill())
-
-    await registry.init_all(None)
+    # Plugins (lifecycle hooks)
+    plugins = PluginRegistry()
+    if config.plugins.modules:
+        plugins.load_modules(config.plugins.modules, config)
 
     # Agent loop
     loop = AgentLoop(
         provider=provider,
-        registry=registry,
-        memory=memory,
+        skills=skills,
+        plugins=plugins,
         max_iterations=config.agent.max_iterations,
     )
 
     # WebSocket server
     ws = WebSocketServer(host=config.ws.host, port=config.ws.port)
+    ws.on_connect(loop.on_connect)
     ws.on_message(loop.handle_message)
     await ws.start()
 
@@ -73,7 +68,7 @@ async def main() -> None:
         pass
     finally:
         await ws.stop()
-        await registry.shutdown_all()
+        plugins.shutdown_all()
         await provider.close()
         logger.info("Agent shut down.")
 

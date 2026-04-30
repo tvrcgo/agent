@@ -1,30 +1,19 @@
 from __future__ import annotations
 
-from typing import Any
-
-from agent.core.plugin import Plugin
 from agent.providers.base import Message, ToolCall
 
 
-class ShortTermMemory(Plugin):
+class ShortTermMemory:
     """Sliding-window short-term memory.
 
     Keeps the most recent messages within window_size.
     System prompt is always preserved at position 0.
     """
 
-    name = "short_term_memory"
-
     def __init__(self, window_size: int = 50) -> None:
         self._window_size = window_size
         self._messages: list[Message] = []
         self._system_prompt: Message | None = None
-
-    async def on_init(self, ctx: Any) -> None:
-        pass
-
-    async def on_shutdown(self) -> None:
-        self.clear()
 
     def set_system_prompt(self, content: str) -> None:
         self._system_prompt = Message(role="system", content=content)

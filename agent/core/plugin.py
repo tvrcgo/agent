@@ -1,73 +1,102 @@
 from __future__ import annotations
 
+import importlib
+import logging
 from abc import ABC, abstractmethod
+from collections import defaultdict
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Callable, Awaitable, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from agent.core.ws import ClientSession
+    from agent.config import Config
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
-class ToolDefinition:
-    name: str
-    description: str
-    parameters: dict[str, Any] = field(default_factory=dict)
+class PluginContext:
+    """Context passed to every plugin handler.
+
+    Attributes:
+        session_id: The WebSocket session ID (from query string)
+        client: The ClientSession for sending events
+        data: Mutable dict for plugins to share arbitrary data
+    """
+
+    session_id: str | None
+    client: ClientSession
+    data: dict[str, Any] = field(default_factory=dict)
+
+
+PluginHandler = Callable[[PluginContext], Awaitable[None]]
 
 
 class Plugin(ABC):
-    """Base class for all plugins."""
+    """Base class for lifecycle plugins."""
 
     name: str = ""
 
-    async def on_init(self, ctx: Any) -> None:
-        pass
-
-    async def on_shutdown(self) -> None:
-        pass
-
-
-class Skill(Plugin):
-    """A plugin that exposes tools to the LLM."""
-
-    @property
     @abstractmethod
-    def tools(self) -> list[ToolDefinition]:
+    def register(self, registry: PluginRegistry) -> None:
+        """Register hooks into the registry."""
         ...
 
-    @abstractmethod
-    async def execute(self, tool_name: str, arguments: dict[str, Any]) -> str:
-        ...
+    def init(self, config: Config) -> None:
+        """Initialize plugin with config. Override if needed."""
+        pass
+
+    def shutdown(self) -> None:
+        """Cleanup on shutdown. Override if needed."""
+        pass
 
 
 class PluginRegistry:
-    """Manages plugin/skill registration and tool dispatch."""
+    """Registry for lifecycle plugins."""
 
     def __init__(self) -> None:
-        self._plugins: list[Plugin] = []
-        self._skills: dict[str, Skill] = {}
-        self._tool_map: dict[str, Skill] = {}
+        self._hooks: dict[str, list[PluginHandler]] = defaultdict(list)
+        self._plugins: dict[str, Plugin] = {}
+
+    def on(self, hook_name: str, handler: PluginHandler) -> None:
+        """Register a handler for a hook point."""
+        self._hooks[hook_name].append(handler)
 
     def register(self, plugin: Plugin) -> None:
-        self._plugins.append(plugin)
-        if isinstance(plugin, Skill):
-            self._skills[plugin.name] = plugin
-            for tool in plugin.tools:
-                self._tool_map[tool.name] = plugin
+        """Register a plugin and its hooks."""
+        self._plugins[plugin.name] = plugin
+        plugin.register(self)
+        logger.info("Plugin registered: %s", plugin.name)
 
-    async def init_all(self, ctx: Any) -> None:
-        for plugin in self._plugins:
-            await plugin.on_init(ctx)
+    def load_modules(self, module_paths: list[str], config: Config) -> None:
+        """Dynamically load plugin modules and register all Plugin subclasses."""
+        for module_path in module_paths:
+            try:
+                module = importlib.import_module(module_path)
+            except ImportError:
+                logger.error("Failed to import plugin module: %s", module_path, exc_info=True)
+                continue
 
-    async def shutdown_all(self) -> None:
-        for plugin in reversed(self._plugins):
-            await plugin.on_shutdown()
+            for attr_name in dir(module):
+                attr = getattr(module, attr_name)
+                if (
+                    isinstance(attr, type)
+                    and issubclass(attr, Plugin)
+                    and attr is not Plugin
+                ):
+                    try:
+                        plugin = attr()
+                        plugin.init(config)
+                        self.register(plugin)
+                    except Exception:
+                        logger.error("Failed to instantiate plugin %s.%s", module_path, attr_name, exc_info=True)
 
-    def get_tool_definitions(self) -> list[ToolDefinition]:
-        defs: list[ToolDefinition] = []
-        for skill in self._skills.values():
-            defs.extend(skill.tools)
-        return defs
+    async def emit(self, hook_name: str, ctx: PluginContext) -> None:
+        """Trigger all handlers for a hook point in registration order."""
+        for handler in self._hooks[hook_name]:
+            await handler(ctx)
 
-    async def execute_tool(self, tool_name: str, arguments: dict[str, Any]) -> str:
-        skill = self._tool_map.get(tool_name)
-        if skill is None:
-            return f"Error: unknown tool '{tool_name}'"
-        return await skill.execute(tool_name, arguments)
+    def shutdown_all(self) -> None:
+        """Shutdown all registered plugins."""
+        for plugin in reversed(list(self._plugins.values())):
+            plugin.shutdown()

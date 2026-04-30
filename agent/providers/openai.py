@@ -5,7 +5,7 @@ from typing import Any
 
 import httpx
 
-from agent.core.plugin import ToolDefinition
+from agent.core.skill import ToolDefinition
 from agent.providers.base import LLMProvider, LLMResponse, Message, ToolCall, Usage
 
 

@@ -1,6 +1,5 @@
-from agent.core.plugin import Plugin, Skill, PluginRegistry
-from agent.core.memory import ShortTermMemory
-from agent.core.loop import AgentLoop
+from agent.core.plugin import Plugin, PluginRegistry, PluginContext
+from agent.core.skill import Skill, SkillRegistry, ToolDefinition
 from agent.core.ws import WebSocketServer
 
-__all__ = ["Plugin", "Skill", "PluginRegistry", "ShortTermMemory", "AgentLoop", "WebSocketServer"]
+__all__ = ["Plugin", "PluginRegistry", "PluginContext", "Skill", "SkillRegistry", "ToolDefinition", "WebSocketServer"]

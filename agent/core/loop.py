@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import uuid
 from typing import Any
 
-from agent.core.plugin import PluginRegistry
+from agent.core.plugin import PluginRegistry, PluginContext
+from agent.core.skill import SkillRegistry
 from agent.core.ws import (
     CancelMessage,
     ClientSession,
@@ -18,25 +18,30 @@ from agent.core.ws import (
     ToolResultEvent,
     UserMessage,
 )
-from agent.core.memory import ShortTermMemory
 from agent.providers.base import LLMProvider, LLMResponse, ToolCall
 
 logger = logging.getLogger(__name__)
 
 
 class AgentLoop:
-    """Autonomous reasoning loop: Think → Act → Observe → repeat until done."""
+    """Autonomous reasoning loop: Think → Act → Observe → repeat until done.
+
+    The loop only dispatches to the LLM provider and triggers plugins at each
+    lifecycle node. All extension logic (memory, persistence, etc.) is
+    implemented by plugin handlers. The loop communicates with plugins solely
+    through ctx.data.
+    """
 
     def __init__(
         self,
         provider: LLMProvider,
-        registry: PluginRegistry,
-        memory: ShortTermMemory,
+        skills: SkillRegistry,
+        plugins: PluginRegistry,
         max_iterations: int = 100,
     ) -> None:
         self._provider = provider
-        self._registry = registry
-        self._memory = memory
+        self._skills = skills
+        self._plugins = plugins
         self._max_iterations = max_iterations
         self._current_task: asyncio.Task[None] | None = None
         self._cancelled = False
@@ -45,13 +50,26 @@ class AgentLoop:
     def is_running(self) -> bool:
         return self._current_task is not None and not self._current_task.done()
 
+    async def on_connect(self, session: ClientSession) -> None:
+        ctx = PluginContext(session_id=session.session_id, client=session)
+        await self._plugins.emit("on_connect", ctx)
+
+    async def on_disconnect(self, session: ClientSession) -> None:
+        ctx = PluginContext(session_id=session.session_id, client=session)
+        await self._plugins.emit("on_disconnect", ctx)
+
     async def handle_message(
         self, msg: Any, session: ClientSession
     ) -> None:
         if isinstance(msg, TaskMessage):
             await self._start_task(msg.content, session)
         elif isinstance(msg, UserMessage):
-            self._memory.add_user_message(msg.content)
+            ctx = PluginContext(
+                session_id=session.session_id,
+                client=session,
+                data={"message": msg.content},
+            )
+            await self._plugins.emit("on_message", ctx)
         elif isinstance(msg, CancelMessage):
             await self._cancel(session)
 
@@ -63,8 +81,14 @@ class AgentLoop:
             return
 
         self._cancelled = False
-        self._memory.add_user_message(task)
-        self._current_task = asyncio.create_task(self._run_loop(session))
+
+        ctx = PluginContext(
+            session_id=session.session_id,
+            client=session,
+            data={"task": task},
+        )
+        await self._plugins.emit("before_task", ctx)
+        self._current_task = asyncio.create_task(self._run_loop(ctx))
 
     async def _cancel(self, session: ClientSession) -> None:
         self._cancelled = True
@@ -72,72 +96,80 @@ class AgentLoop:
             self._current_task.cancel()
         await session.emit(StatusEvent(state="idle"))
 
-    async def _run_loop(self, session: ClientSession) -> None:
+    async def _run_loop(self, ctx: PluginContext) -> None:
         try:
             for iteration in range(self._max_iterations):
                 if self._cancelled:
                     break
 
                 # Think
-                await session.emit(StatusEvent(state="thinking"))
-                tools = self._registry.get_tool_definitions()
+                await ctx.client.emit(StatusEvent(state="thinking"))
+                await self._plugins.emit("before_llm", ctx)
+
+                messages = ctx.data.get("messages", [])
+                tools = self._skills.get_definitions()
                 response: LLMResponse = await self._provider.chat(
-                    messages=self._memory.get_messages(),
+                    messages=messages,
                     tools=tools if tools else None,
                 )
 
+                ctx.data["response"] = response
+                await self._plugins.emit("after_llm", ctx)
+
                 # Emit thinking if present
                 if response.thinking:
-                    await session.emit(ThinkingEvent(content=response.thinking))
+                    await ctx.client.emit(ThinkingEvent(content=response.thinking))
 
                 # Act: execute tool calls
                 if response.tool_calls:
-                    await session.emit(StatusEvent(state="acting"))
-                    self._memory.add_assistant_message(
-                        content=response.text,
-                        thinking=response.thinking,
-                        tool_calls=response.tool_calls,
-                    )
+                    await ctx.client.emit(StatusEvent(state="acting"))
 
                     for tool_call in response.tool_calls:
                         if self._cancelled:
                             break
-                        await self._execute_tool(tool_call, session)
+                        await self._execute_tool(tool_call, ctx)
 
                     continue
 
-                # Observe / Done: no tool calls means task is complete
+                # Done: no tool calls means task is complete
                 if response.text:
-                    await session.emit(MessageEvent(content=response.text))
-                    self._memory.add_assistant_message(
-                        content=response.text,
-                        thinking=response.thinking,
-                    )
+                    await ctx.client.emit(MessageEvent(content=response.text))
 
-                await session.emit(StatusEvent(state="done"))
+                ctx.data["reason"] = "done"
+                await self._plugins.emit("on_complete", ctx)
+                await ctx.client.emit(StatusEvent(state="done"))
                 break
             else:
-                await session.emit(
+                await ctx.client.emit(
                     ErrorEvent(
                         code="max_iterations",
                         message=f"Reached maximum iterations ({self._max_iterations})",
                     )
                 )
-                await session.emit(StatusEvent(state="done"))
+                ctx.data["reason"] = "error"
+                await self._plugins.emit("on_complete", ctx)
+                await ctx.client.emit(StatusEvent(state="done"))
 
         except asyncio.CancelledError:
             logger.info("Task cancelled")
+            ctx.data["reason"] = "cancelled"
+            await self._plugins.emit("on_complete", ctx)
         except Exception as e:
             logger.exception("Error in agent loop")
-            await session.emit(ErrorEvent(code="internal", message=str(e)))
-            await session.emit(StatusEvent(state="idle"))
+            await ctx.client.emit(ErrorEvent(code="internal", message=str(e)))
+            ctx.data["reason"] = "error"
+            await self._plugins.emit("on_complete", ctx)
+            await ctx.client.emit(StatusEvent(state="idle"))
         finally:
             self._current_task = None
 
     async def _execute_tool(
-        self, tool_call: ToolCall, session: ClientSession
+        self, tool_call: ToolCall, ctx: PluginContext
     ) -> None:
-        await session.emit(
+        ctx.data["tool_call"] = tool_call
+        await self._plugins.emit("before_tool", ctx)
+
+        await ctx.client.emit(
             ToolCallEvent(
                 id=tool_call.id,
                 name=tool_call.name,
@@ -145,11 +177,11 @@ class AgentLoop:
             )
         )
 
-        result = await self._registry.execute_tool(
+        result = await self._skills.execute(
             tool_call.name, tool_call.arguments
         )
 
-        await session.emit(
+        await ctx.client.emit(
             ToolResultEvent(
                 id=tool_call.id,
                 name=tool_call.name,
@@ -157,4 +189,5 @@ class AgentLoop:
             )
         )
 
-        self._memory.add_tool_result(tool_call, result)
+        ctx.data["result"] = result
+        await self._plugins.emit("after_tool", ctx)
