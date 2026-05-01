@@ -18,7 +18,7 @@ ws:
 
 skills:
   modules:
-    - agent.skills.echo
+    - agent.skills.websearch
 
 plugins:
   modules:

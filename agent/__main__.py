@@ -58,7 +58,7 @@ async def main() -> None:
     # WebSocket server
     ws = WebSocketServer(host=config.ws.host, port=config.ws.port)
     ws.on_connect(loop.on_connect)
-    ws.on_message(loop.handle_message)
+    ws.on_message(loop.on_message)
     ws.on_disconnect(loop.on_disconnect)
     await ws.start()
 

@@ -84,21 +84,18 @@ def _serialize_event(event: AgentEvent) -> str:
 
 
 @dataclass
-class TaskMessage:
+class ChatMessage:
+    """User-typed conversation message."""
     content: str
 
 
 @dataclass
-class UserMessage:
-    content: str
+class CommandMessage:
+    """UI-triggered command: cancel, compress, etc."""
+    action: str
 
 
-@dataclass
-class CancelMessage:
-    pass
-
-
-IncomingMessage = TaskMessage | UserMessage | CancelMessage
+IncomingMessage = ChatMessage | CommandMessage
 
 
 def _parse_incoming(raw: str) -> IncomingMessage:
@@ -107,12 +104,10 @@ def _parse_incoming(raw: str) -> IncomingMessage:
     payload = data.get("payload", {})
 
     match msg_type:
-        case "task":
-            return TaskMessage(content=payload["content"])
-        case "message":
-            return UserMessage(content=payload["content"])
-        case "cancel":
-            return CancelMessage()
+        case "chat":
+            return ChatMessage(content=payload["content"])
+        case "command":
+            return CommandMessage(action=payload.get("action", ""))
         case _:
             raise ValueError(f"Unknown message type: {msg_type}")
 

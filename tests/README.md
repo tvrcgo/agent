@@ -43,7 +43,7 @@
 ## 集成测试 — WebSocket
 
 ### 8. 基本 Echo 任务
-- [ ] 发送 task，收到 status → thinking → acting → tool_call → tool_result → message → done
+- [ ] 发送 chat，收到 status → thinking → acting → tool_call → tool_result → message → done
 - [ ] 最终收到 message 事件包含 echo 结果
 
 ### 9. 多轮工具调用
@@ -51,7 +51,7 @@
 - [ ] 每次工具调用的结果正确传回 LLM
 
 ### 10. 会话持久化
-- [ ] WebSocket 断开后 session 文件写入 `data/memory/`
+- [ ] WebSocket 断开后 session 文件写入 `data/sessions/`
 - [ ] 重连后恢复之前的上下文
 
 ### 11. 多会话并发

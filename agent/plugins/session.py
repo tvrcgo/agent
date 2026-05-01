@@ -138,13 +138,13 @@ class SessionPlugin(Plugin):
     def register(self, registry: PluginRegistry) -> None:
         """Register lifecycle hooks."""
         registry.on("on_connect", self._on_connect)
-        registry.on("on_message", self._on_message)
-        registry.on("before_task", self._on_before_task)
+        registry.on("before_job", self._on_before_job)
         registry.on("before_llm", self._on_before_llm)
         registry.on("after_llm", self._on_after_llm)
         registry.on("after_tool", self._on_after_tool)
         registry.on("on_complete", self._on_complete)
         registry.on("on_disconnect", self._on_disconnect)
+        registry.on("command:compress", self._on_compress)
 
     def init(self, config: Config) -> None:
         """Initialize with config."""
@@ -175,17 +175,10 @@ class SessionPlugin(Plugin):
         """Pre-load session data when a client connects."""
         self._get_or_load(ctx.session_id)
 
-    async def _on_message(self, ctx: PluginContext) -> None:
-        """Append user message to session memory."""
-        content = ctx.data.get("message", "")
+    async def _on_before_job(self, ctx: PluginContext) -> None:
+        content = ctx.data.get("content", "")
         if content:
             self._get_or_load(ctx.session_id).add_user_message(content)
-
-    async def _on_before_task(self, ctx: PluginContext) -> None:
-        """Append task as user message."""
-        task = ctx.data.get("task", "")
-        if task:
-            self._get_or_load(ctx.session_id).add_user_message(task)
 
     async def _on_before_llm(self, ctx: PluginContext) -> None:
         """Provide messages to the loop via ctx.data, compressing if needed."""
@@ -215,8 +208,13 @@ class SessionPlugin(Plugin):
         if tool_call:
             self._get_or_load(ctx.session_id).add_tool_result(tool_call, result)
 
+    async def _on_compress(self, ctx: PluginContext) -> None:
+        """Handle manual compress command."""
+        memory = self._get_or_load(ctx.session_id)
+        await self._compress(ctx, memory)
+
     async def _on_complete(self, ctx: PluginContext) -> None:
-        """Persist session data when a task completes."""
+        """Persist session data when a job completes."""
         self._persist(ctx.session_id)
 
     async def _on_disconnect(self, ctx: PluginContext) -> None:

@@ -7,16 +7,15 @@ from typing import Any
 from agent.core.plugin import PluginRegistry, PluginContext
 from agent.core.skill import SkillRegistry
 from agent.core.ws import (
-    CancelMessage,
+    ChatMessage,
     ClientSession,
+    CommandMessage,
     ErrorEvent,
     MessageEvent,
     StatusEvent,
-    TaskMessage,
     ThinkingEvent,
     ToolCallEvent,
     ToolResultEvent,
-    UserMessage,
 )
 from agent.core.llm import OpenAIProvider, LLMResponse, ToolCall
 
@@ -27,7 +26,7 @@ class AgentLoop:
     """Autonomous reasoning loop: Think → Act → Observe → repeat until done.
 
     Supports multiple concurrent WebSocket sessions. Each session runs an
-    independent task — starting or cancelling one does not affect others.
+    independent job — starting or cancelling one does not affect others.
     """
 
     def __init__(
@@ -42,7 +41,10 @@ class AgentLoop:
         self._plugins = plugins
         self._max_iterations = max_iterations
         self._max_concurrent: int = 10
-        self._tasks: dict[str, asyncio.Task[None]] = {}
+        self._jobs: dict[str, asyncio.Task[None]] = {}
+
+        # Core commands handled by the loop itself
+        self._plugins.on("command:cancel", self._on_command_cancel)
 
     @staticmethod
     def _session_key(session: ClientSession) -> str:
@@ -50,8 +52,8 @@ class AgentLoop:
 
     def is_running(self, session: ClientSession) -> bool:
         key = self._session_key(session)
-        task = self._tasks.get(key)
-        return task is not None and not task.done()
+        t = self._jobs.get(key)
+        return t is not None and not t.done()
 
     async def on_connect(self, session: ClientSession) -> None:
         ctx = PluginContext(session_id=session.session_id, client=session)
@@ -61,51 +63,42 @@ class AgentLoop:
         ctx = PluginContext(session_id=session.session_id, client=session)
         await self._plugins.emit("on_disconnect", ctx)
 
-    async def handle_message(
+    async def on_message(
         self, msg: Any, session: ClientSession
     ) -> None:
-        if isinstance(msg, TaskMessage):
-            await self._start_task(msg.content, session)
-        elif isinstance(msg, UserMessage):
+        if isinstance(msg, ChatMessage):
+            await self._start_job(msg.content, session)
+        elif isinstance(msg, CommandMessage):
             ctx = PluginContext(
                 session_id=session.session_id,
                 client=session,
-                data={"message": msg.content},
+                data={"action": msg.action},
             )
-            await self._plugins.emit("on_message", ctx)
-        elif isinstance(msg, CancelMessage):
-            await self._cancel(session)
+            ctx.llm = self._llm
+            await self._plugins.emit(f"command:{msg.action}", ctx)
 
-    async def _start_task(self, task: str, session: ClientSession) -> None:
+    async def _start_job(self, content: str, session: ClientSession) -> None:
+        ctx = PluginContext(
+            session_id=session.session_id,
+            client=session,
+            data={"content": content},
+        )
+        await self._plugins.emit("before_job", ctx)
+
+        # Already running: content appended, loop will pick it up
         if self.is_running(session):
-            await session.emit(
-                ErrorEvent(code="busy", message="A task is already running for this session")
-            )
             return
 
-        # Count active (non-done) tasks
-        active = sum(1 for t in self._tasks.values() if not t.done())
+        # Check concurrent limit
+        active = sum(1 for t in self._jobs.values() if not t.done())
         if active >= self._max_concurrent:
             await session.emit(
                 ErrorEvent(code="busy", message=f"Too many concurrent sessions (max {self._max_concurrent})")
             )
             return
 
-        ctx = PluginContext(
-            session_id=session.session_id,
-            client=session,
-            data={"task": task},
-        )
-        await self._plugins.emit("before_task", ctx)
         key = self._session_key(session)
-        self._tasks[key] = asyncio.create_task(self._run_loop(ctx, key))
-
-    async def _cancel(self, session: ClientSession) -> None:
-        key = self._session_key(session)
-        task = self._tasks.get(key)
-        if task and not task.done():
-            task.cancel()
-        await session.emit(StatusEvent(state="idle"))
+        self._jobs[key] = asyncio.create_task(self._run_loop(ctx, key))
 
     async def _run_loop(self, ctx: PluginContext, session_key: str) -> None:
         try:
@@ -138,7 +131,7 @@ class AgentLoop:
 
                     continue
 
-                # Done: no tool calls means task is complete
+                # Done: no tool calls means job is complete
                 if response.text:
                     await ctx.client.emit(MessageEvent(content=response.text))
 
@@ -158,7 +151,7 @@ class AgentLoop:
                 await ctx.client.emit(StatusEvent(state="done"))
 
         except asyncio.CancelledError:
-            logger.info("Task cancelled, session=%s", session_key)
+            logger.info("Job cancelled, session=%s", session_key)
             ctx.data["reason"] = "cancelled"
             await self._plugins.emit("on_complete", ctx)
         except Exception as e:
@@ -168,7 +161,7 @@ class AgentLoop:
             await self._plugins.emit("on_complete", ctx)
             await ctx.client.emit(StatusEvent(state="idle"))
         finally:
-            self._tasks.pop(session_key, None)
+            self._jobs.pop(session_key, None)
 
     async def _execute_tool(
         self, tool_call: ToolCall, ctx: PluginContext
@@ -198,3 +191,10 @@ class AgentLoop:
 
         ctx.data["result"] = result
         await self._plugins.emit("after_tool", ctx)
+
+    async def _on_command_cancel(self, ctx: PluginContext) -> None:
+        key = self._session_key(ctx.client)
+        t = self._jobs.get(key)
+        if t and not t.done():
+            t.cancel()
+        await ctx.client.emit(StatusEvent(state="idle"))

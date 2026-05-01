@@ -7,19 +7,15 @@ import websockets
 WS_URL = "ws://127.0.0.1:8765"
 
 
-def _task(content: str) -> str:
-    return json.dumps({"type": "task", "payload": {"content": content}})
-
-
-def _msg(content: str) -> str:
-    return json.dumps({"type": "message", "payload": {"content": content}})
+def _chat(content: str) -> str:
+    return json.dumps({"type": "chat", "payload": {"content": content}})
 
 
 async def test_echo():
-    """Scenario 1: Basic echo task."""
+    """Scenario 1: Basic echo job."""
     print("=== Scenario 1: Basic Echo ===")
     async with websockets.connect(WS_URL) as ws:
-        await ws.send(_task("echo hello world"))
+        await ws.send(_chat("echo hello world"))
 
         msgs = []
         while True:
@@ -44,7 +40,7 @@ async def test_multi_turn():
     """Scenario 2: Multi-turn conversation with tool usage."""
     print("\n=== Scenario 2: Multi-turn ===")
     async with websockets.connect(WS_URL) as ws:
-        await ws.send(_task("echo first, then echo second"))
+        await ws.send(_chat("echo first, then echo second"))
 
         msgs = []
         while True:
@@ -75,7 +71,7 @@ async def test_session_persistence():
     """Scenario 3: Session persists across connections."""
     print("\n=== Scenario 3: Session Persistence ===")
     async with websockets.connect(WS_URL) as ws:
-        await ws.send(_msg("my name is TestBot"))
+        await ws.send(_chat("my name is TestBot"))
         await asyncio.sleep(1)
 
     # Check session files were created
@@ -94,7 +90,7 @@ async def test_multi_session():
     async def run_session(name: str):
         url = f"{WS_URL}?session_id={name}"
         async with websockets.connect(url) as ws:
-            await ws.send(_task(f"echo hello from {name}"))
+            await ws.send(_chat(f"echo hello from {name}"))
             msgs = []
             while True:
                 raw = await asyncio.wait_for(ws.recv(), timeout=30)
@@ -121,12 +117,12 @@ async def test_multi_session():
     return all_ok
 
 
-async def test_long_task():
-    """Scenario 5: Long-running task with multiple iterations."""
+async def test_long_job():
+    """Scenario 5: Long-running job with multiple iterations."""
     print("\n=== Scenario 5: Long Task ===")
     async with websockets.connect(WS_URL) as ws:
         prompt = "echo the numbers from 1 to 5 one at a time"
-        await ws.send(_task(prompt))
+        await ws.send(_chat(prompt))
 
         msgs = []
         while True:
@@ -161,7 +157,7 @@ async def main():
         ("multi_turn", test_multi_turn),
         ("persistence", test_session_persistence),
         ("multi_session", test_multi_session),
-        ("long_task", test_long_task),
+        ("long_job", test_long_job),
     ]:
         try:
             results[name] = await fn()
