@@ -121,6 +121,7 @@ def _parse_incoming(raw: str) -> IncomingMessage:
 
 MessageHandler = Callable[[IncomingMessage, "ClientSession"], Coroutine[Any, Any, None]]
 ConnectHandler = Callable[["ClientSession"], Coroutine[Any, Any, None]]
+DisconnectHandler = Callable[["ClientSession"], Coroutine[Any, Any, None]]
 
 
 class ClientSession:
@@ -143,12 +144,16 @@ class WebSocketServer:
         self._server: Server | None = None
         self._handler: MessageHandler | None = None
         self._connect_handler: ConnectHandler | None = None
+        self._disconnect_handler: DisconnectHandler | None = None
 
     def on_message(self, handler: MessageHandler) -> None:
         self._handler = handler
 
     def on_connect(self, handler: ConnectHandler) -> None:
         self._connect_handler = handler
+
+    def on_disconnect(self, handler: DisconnectHandler) -> None:
+        self._disconnect_handler = handler
 
     async def start(self) -> None:
         self._server = await websockets.serve(
@@ -193,3 +198,8 @@ class WebSocketServer:
             pass
         finally:
             logger.info(f"Client disconnected: {ws.remote_address}, session_id={session.session_id}")
+            if self._disconnect_handler:
+                try:
+                    await self._disconnect_handler(session)
+                except Exception:
+                    logger.warning("Disconnect handler error", exc_info=True)

@@ -77,6 +77,14 @@ class SessionMemory:
         msgs.extend(recent)
         return msgs
 
+    @property
+    def keep_recent(self) -> int:
+        return self._keep_recent
+
+    def add_message(self, msg: Message) -> None:
+        """Append a pre-constructed message (used for deserialization). Does not trigger trim."""
+        self._messages.append(msg)
+
     def clear(self) -> None:
         self._messages.clear()
 
@@ -274,10 +282,11 @@ class SessionPlugin(Plugin):
 
         all_messages = memory.get_messages()
         # Skip system prompt (index 0), keep recent messages, compress the middle
-        if len(all_messages) <= memory._keep_recent + 1:
+        kr = memory.keep_recent
+        if len(all_messages) <= kr + 1:
             return
 
-        old = all_messages[1:-memory._keep_recent]  # between system prompt and recent
+        old = all_messages[1:-kr]  # between system prompt and recent
         if not old:
             return
 
@@ -299,7 +308,7 @@ class SessionPlugin(Plugin):
             if response.text:
                 memory.compact(response.text)
                 logger.info("Session compressed: %d messages -> summary + %d recent",
-                            len(old), memory._keep_recent)
+                            len(old), kr)
         except Exception:
             logger.warning("Compression failed, falling back to sliding window", exc_info=True)
 
@@ -335,7 +344,7 @@ class SessionPlugin(Plugin):
                     if msg.role == "system":
                         memory.set_system_prompt(msg.content or "")
                     else:
-                        memory._messages.append(msg)
+                        memory.add_message(msg)
                 logger.info("Session %s loaded from disk (%d messages)", session_id, len(messages))
                 return memory
             except Exception:
