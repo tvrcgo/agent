@@ -18,7 +18,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def load_system_prompt(path: str = "AGENTS.md") -> str:
+def load_system_prompt(path: str = "agent/AGENTS.md") -> str:
     p = Path(path)
     if p.exists():
         return p.read_text()

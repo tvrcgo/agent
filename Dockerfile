@@ -8,6 +8,6 @@ COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-dev
 
 COPY agent/ agent/
-COPY config.yml AGENTS.md ./
+COPY config.yml ./
 
 CMD ["uv", "run", "python", "-m", "agent"]

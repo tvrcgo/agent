@@ -125,12 +125,10 @@ class SessionPlugin(Plugin):
     """
 
     name = "session"
-    MEMORY_PATH = "/agent/memory"
 
     def __init__(self) -> None:
-        self._base_path = Path(self.MEMORY_PATH)
+        self._base_path = Path("./data/sessions")
         self._sessions: dict[str, SessionMemory] = {}
-        self._active_session_id: str | None = None
         self._default_memory: SessionMemory | None = None
         self._max_context_messages: int = 100
         self._max_tokens: int = 65536
@@ -174,26 +172,24 @@ class SessionPlugin(Plugin):
     # --- Hook handlers ---
 
     async def _on_connect(self, ctx: PluginContext) -> None:
-        """Load session data when a client connects."""
-        self._activate(ctx.session_id)
+        """Pre-load session data when a client connects."""
+        self._get_or_load(ctx.session_id)
 
     async def _on_message(self, ctx: PluginContext) -> None:
         """Append user message to session memory."""
-        self._activate(ctx.session_id)
         content = ctx.data.get("message", "")
         if content:
-            self._get_active_memory().add_user_message(content)
+            self._get_or_load(ctx.session_id).add_user_message(content)
 
     async def _on_before_task(self, ctx: PluginContext) -> None:
-        """Append task as user message and activate session."""
-        self._activate(ctx.session_id)
+        """Append task as user message."""
         task = ctx.data.get("task", "")
         if task:
-            self._get_active_memory().add_user_message(task)
+            self._get_or_load(ctx.session_id).add_user_message(task)
 
     async def _on_before_llm(self, ctx: PluginContext) -> None:
         """Provide messages to the loop via ctx.data, compressing if needed."""
-        memory = self._get_active_memory()
+        memory = self._get_or_load(ctx.session_id)
         if memory.needs_compression():
             await self._compress(ctx, memory)
         ctx.data["messages"] = memory.get_messages()
@@ -203,44 +199,38 @@ class SessionPlugin(Plugin):
         response = ctx.data.get("response")
         if response is None:
             return
-        self._get_active_memory().add_assistant_message(
+        memory = self._get_or_load(ctx.session_id)
+        memory.add_assistant_message(
             content=response.text,
             thinking=response.thinking,
             tool_calls=response.tool_calls,
         )
         if response.usage:
-            self._get_active_memory().set_last_prompt_tokens(response.usage.prompt_tokens)
+            memory.set_last_prompt_tokens(response.usage.prompt_tokens)
 
     async def _on_after_tool(self, ctx: PluginContext) -> None:
         """Record tool result into session memory."""
         tool_call = ctx.data.get("tool_call")
         result = ctx.data.get("result", "")
         if tool_call:
-            self._get_active_memory().add_tool_result(tool_call, result)
+            self._get_or_load(ctx.session_id).add_tool_result(tool_call, result)
 
     async def _on_complete(self, ctx: PluginContext) -> None:
         """Persist session data when a task completes."""
-        self.persist_active()
+        self._persist(ctx.session_id)
 
     async def _on_disconnect(self, ctx: PluginContext) -> None:
         """Persist session data when a client disconnects."""
-        self.persist_active()
+        self._persist(ctx.session_id)
 
     # --- Internal ---
 
-    def _activate(self, session_id: str | None) -> None:
-        """Activate a session by ID."""
-        if session_id is None:
-            self._active_session_id = None
-            return
-        self._active_session_id = session_id
-        if session_id not in self._sessions:
+    def _get_or_load(self, session_id: str | None) -> SessionMemory:
+        """Get or load session memory by session ID. Returns default memory if no ID."""
+        if session_id and session_id not in self._sessions:
             self._sessions[session_id] = self._load_session(session_id)
-
-    def _get_active_memory(self) -> SessionMemory:
-        """Return the memory for the currently active session (or default)."""
-        if self._active_session_id and self._active_session_id in self._sessions:
-            return self._sessions[self._active_session_id]
+        if session_id and session_id in self._sessions:
+            return self._sessions[session_id]
         return self._default_memory or self._make_memory()
 
     def _make_memory(self) -> SessionMemory:
@@ -251,13 +241,10 @@ class SessionPlugin(Plugin):
             keep_recent=self._keep_recent,
         )
 
-    def persist_active(self) -> None:
-        """Persist the currently active session to disk."""
-        if self._active_session_id and self._active_session_id in self._sessions:
-            self._save_session(
-                self._active_session_id,
-                self._sessions[self._active_session_id],
-            )
+    def _persist(self, session_id: str | None) -> None:
+        """Persist a session to disk."""
+        if session_id and session_id in self._sessions:
+            self._save_session(session_id, self._sessions[session_id])
 
     async def _compress(self, ctx: PluginContext, memory: SessionMemory) -> None:
         """Summarize older messages via LLM and compact the memory."""
@@ -318,23 +305,24 @@ class SessionPlugin(Plugin):
     def _load_session(self, session_id: str) -> SessionMemory:
         """Load a session from disk, or return a fresh SessionMemory."""
         path = self._session_file(session_id)
-        if path.exists():
-            try:
-                messages = []
-                for line in path.read_text(encoding="utf-8").splitlines():
-                    line = line.strip()
-                    if line:
-                        messages.append(self._deserialize_message(json.loads(line)))
-                memory = self._make_memory()
-                for msg in messages:
-                    if msg.role == "system":
-                        memory.set_system_prompt(msg.content or "")
-                    else:
-                        memory.add_message(msg)
-                logger.info("Session %s loaded from disk (%d messages)", session_id, len(messages))
-                return memory
-            except Exception:
-                logger.warning("Failed to load session %s, starting fresh", session_id, exc_info=True)
+        if not path.exists():
+            return self._make_memory()
+        try:
+            messages = []
+            for line in path.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if line:
+                    messages.append(self._deserialize_message(json.loads(line)))
+            memory = self._make_memory()
+            for msg in messages:
+                if msg.role == "system":
+                    memory.set_system_prompt(msg.content or "")
+                else:
+                    memory.add_message(msg)
+            logger.info("Session %s loaded from disk (%d messages)", session_id, len(messages))
+            return memory
+        except Exception:
+            logger.warning("Failed to load session %s, starting fresh", session_id, exc_info=True)
         return self._make_memory()
 
     def _save_session(self, session_id: str, memory: SessionMemory) -> None:

@@ -82,8 +82,10 @@ class OpenAIProvider:
         formatted: list[dict[str, Any]] = []
         for msg in messages:
             m: dict[str, Any] = {"role": msg.role}
-            if msg.content is not None:
+            if msg.content:
                 m["content"] = msg.content
+            if msg.thinking:
+                m["reasoning_content"] = msg.thinking
             if msg.tool_calls:
                 m["tool_calls"] = [
                     {

@@ -18,7 +18,7 @@ class ModelConfig(BaseModel):
 
 class AgentConfig(BaseModel):
     max_iterations: int = 100
-    system_prompt_path: str = "AGENTS.md"
+    system_prompt_path: str = "agent/AGENTS.md"
     max_context_messages: int = 100  # Max messages to send to LLM per request
     max_tokens: int = 65536          # Model max context window
     compress_threshold: float = 0.9  # Trigger compression at 90%
