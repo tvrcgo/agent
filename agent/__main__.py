@@ -53,6 +53,7 @@ async def main() -> None:
         plugins=plugins,
         max_iterations=config.agent.max_iterations,
     )
+    loop._max_concurrent = config.agent.max_concurrent_sessions
 
     # WebSocket server
     ws = WebSocketServer(host=config.ws.host, port=config.ws.port)

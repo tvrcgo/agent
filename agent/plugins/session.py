@@ -15,23 +15,20 @@ logger = logging.getLogger(__name__)
 
 
 class SessionMemory:
-    """Sliding-window short-term memory with compression support.
+    """Per-session conversation memory with compression support.
 
-    Keeps the most recent messages within window_size for storage,
-    and limits context sent to LLM via max_context_messages.
+    Limits context sent to LLM via max_context_messages.
     When estimated tokens exceed max_tokens * compress_threshold,
     older messages are compacted into a summary.
     """
 
     def __init__(
         self,
-        window_size: int = 50,
         max_context_messages: int = 100,
         max_tokens: int = 65536,
         compress_threshold: float = 0.9,
         keep_recent: int = 10,
     ) -> None:
-        self._window_size = window_size
         self._max_context_messages = max_context_messages
         self._max_tokens = max_tokens
         self._compress_threshold = compress_threshold
@@ -45,7 +42,6 @@ class SessionMemory:
 
     def add_user_message(self, content: str) -> None:
         self._messages.append(Message(role="user", content=content))
-        self._trim()
 
     def add_assistant_message(
         self,
@@ -61,13 +57,11 @@ class SessionMemory:
                 tool_calls=tool_calls,
             )
         )
-        self._trim()
 
     def add_tool_result(self, tool_call: ToolCall, result: str) -> None:
         self._messages.append(
             Message(role="tool", content=result, tool_call_id=tool_call.id)
         )
-        self._trim()
 
     def get_messages(self) -> list[Message]:
         msgs: list[Message] = []
@@ -87,11 +81,6 @@ class SessionMemory:
 
     def clear(self) -> None:
         self._messages.clear()
-
-    def _trim(self) -> None:
-        if len(self._messages) > self._window_size:
-            overflow = len(self._messages) - self._window_size
-            self._messages = self._messages[overflow:]
 
     # --- Token estimation and compression ---
 
@@ -143,7 +132,6 @@ class SessionPlugin(Plugin):
         self._sessions: dict[str, SessionMemory] = {}
         self._active_session_id: str | None = None
         self._default_memory: SessionMemory | None = None
-        self._window_size: int = 50
         self._max_context_messages: int = 100
         self._max_tokens: int = 65536
         self._compress_threshold: float = 0.9
@@ -162,7 +150,6 @@ class SessionPlugin(Plugin):
 
     def init(self, config: Config) -> None:
         """Initialize with config."""
-        self._window_size = config.agent.window_size
         self._max_context_messages = config.agent.max_context_messages
         self._max_tokens = config.agent.max_tokens
         self._compress_threshold = config.agent.compress_threshold
@@ -258,7 +245,6 @@ class SessionPlugin(Plugin):
 
     def _make_memory(self) -> SessionMemory:
         return SessionMemory(
-            window_size=self._window_size,
             max_context_messages=self._max_context_messages,
             max_tokens=self._max_tokens,
             compress_threshold=self._compress_threshold,

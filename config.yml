@@ -5,7 +5,7 @@ model:
   api_key: ${DEEPSEEK_API_KEY}
 
 agent:
-  window_size: 50
+  max_concurrent_sessions: 10
   max_iterations: 100
   max_context_messages: 100
   max_tokens: 65536
