@@ -17,9 +17,9 @@ ws:
   port: 8765
 
 skills:
-  modules:
-    - agent.skills.websearch
+  - websearch
+  - confirm
 
 plugins:
-  modules:
-    - agent.plugins.session
+  - session
+  - confirm

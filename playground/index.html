@@ -16,6 +16,7 @@
     --tool: #60a5fa;
     --result: #34d399;
     --message: #fbbf24;
+    --confirm: #fb923c;
     --error: #f87171;
     --status: #94a3b8;
   }
@@ -100,6 +101,7 @@
   .event.tool_call .label { color: var(--tool); }
   .event.tool_result .label { color: var(--result); }
   .event.message .label { color: var(--message); }
+  .event.confirm .label { color: var(--confirm); }
   .event.error .label { color: var(--error); }
   .event.status .label { color: var(--status); }
   .event .body { flex: 1; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
@@ -110,6 +112,29 @@
     font-family: inherit;
     font-size: 12px;
   }
+  .event.confirm .actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 8px;
+  }
+  .event.confirm .actions button {
+    padding: 6px 16px;
+    border-radius: 4px;
+    border: none;
+    font-family: inherit;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .event.confirm .actions .approve {
+    background: #34d399;
+    color: #111;
+  }
+  .event.confirm .actions .deny {
+    background: var(--error);
+    color: #fff;
+  }
+  .event.confirm .actions button:hover { opacity: 0.85; }
   footer {
     padding: 12px 16px;
     background: var(--surface);
@@ -251,7 +276,11 @@ function connect() {
         addEvent('thinking', p.content || '');
         break;
       case 'tool_call':
-        addEvent('tool_call', `${p.name}(${JSON.stringify(p.arguments || {})})`);
+        if (p.name === 'request_confirmation') {
+          addConfirm(p.id, (p.arguments || {}).description || 'Proceed?');
+        } else {
+          addEvent('tool_call', `${p.name}(${JSON.stringify(p.arguments || {})})`);
+        }
         break;
       case 'tool_result':
         addEvent('tool_result', formatResult(p.result, p.error));
@@ -282,6 +311,38 @@ function addEvent(type, content) {
   el.innerHTML = `<span class="label">${type}</span><div class="body">${escapeHtml(content)}</div>`;
   $log.appendChild(el);
   $log.scrollTop = $log.scrollHeight;
+}
+
+function addConfirm(id, description) {
+  const el = document.createElement('div');
+  el.className = 'event confirm';
+  el.innerHTML = `
+    <span class="label">confirm</span>
+    <div class="body">
+      ${escapeHtml(description)}
+      <div class="actions">
+        <button class="approve" data-id="${id}" data-decision="approve">Approve</button>
+        <button class="deny" data-id="${id}" data-decision="deny">Deny</button>
+      </div>
+    </div>`;
+  el.querySelector('.approve').addEventListener('click', onConfirm);
+  el.querySelector('.deny').addEventListener('click', onConfirm);
+  $log.appendChild(el);
+  $log.scrollTop = $log.scrollHeight;
+}
+
+function onConfirm(e) {
+  const btn = e.target;
+  const id = btn.dataset.id;
+  const decision = btn.dataset.decision;
+  ws.send(JSON.stringify({
+    type: 'command',
+    payload: { action: 'confirm', confirm_id: id, decision }
+  }));
+  // Disable both buttons after choice
+  const actions = btn.parentElement.querySelectorAll('button');
+  actions.forEach(b => b.disabled = true);
+  addEvent('status', `→ confirm ${decision}`);
 }
 
 function formatResult(result, error) {

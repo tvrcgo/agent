@@ -31,20 +31,12 @@ class WSConfig(BaseModel):
     port: int = 8765
 
 
-class SkillsConfig(BaseModel):
-    modules: list[str] = []  # e.g. ["agent.skills.echo", "my_skills.weather"]
-
-
-class PluginsConfig(BaseModel):
-    modules: list[str] = []  # e.g. ["agent.plugins.session"]
-
-
 class Config(BaseModel):
     model: ModelConfig = ModelConfig()
     agent: AgentConfig = AgentConfig()
     ws: WSConfig = WSConfig()
-    skills: SkillsConfig = SkillsConfig()
-    plugins: PluginsConfig = PluginsConfig()
+    skills: list[str] = []
+    plugins: list[str] = []
 
 
 def _load_dotenv(path: str | Path = ".env") -> None:

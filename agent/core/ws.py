@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 from dataclasses import asdict, dataclass, field
@@ -91,8 +90,9 @@ class ChatMessage:
 
 @dataclass
 class CommandMessage:
-    """UI-triggered command: cancel, compress, etc."""
+    """UI-triggered command. ``action`` routes to ``command:<action>`` hook, ``data`` is handler-specific."""
     action: str
+    data: dict[str, Any] = field(default_factory=dict)
 
 
 IncomingMessage = ChatMessage | CommandMessage
@@ -107,7 +107,8 @@ def _parse_incoming(raw: str) -> IncomingMessage:
         case "chat":
             return ChatMessage(content=payload["content"])
         case "command":
-            return CommandMessage(action=payload.get("action", ""))
+            action = payload.pop("action", "")
+            return CommandMessage(action=action, data=payload)
         case _:
             raise ValueError(f"Unknown message type: {msg_type}")
 

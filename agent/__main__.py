@@ -38,13 +38,13 @@ async def main() -> None:
 
     # Skills (tools for LLM)
     skills = SkillRegistry()
-    if config.skills.modules:
-        skills.load_modules(config.skills.modules)
+    if config.skills:
+        skills.load_modules(config.skills)
 
     # Plugins (lifecycle hooks)
     plugins = PluginRegistry()
-    if config.plugins.modules:
-        plugins.load_modules(config.plugins.modules, config)
+    if config.plugins:
+        plugins.load_modules(config.plugins, config)
 
     # Agent loop
     loop = AgentLoop(

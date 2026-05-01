@@ -70,9 +70,10 @@ class PluginRegistry:
         plugin.register(self)
         logger.info("Plugin registered: %s", plugin.name)
 
-    def load_modules(self, module_paths: list[str], config: Config) -> None:
-        """Dynamically load plugin modules and register all Plugin subclasses."""
-        for module_path in module_paths:
+    def load_modules(self, names: list[str], config: Config) -> None:
+        """Load plugin modules by short name (e.g. 'session' → 'agent.plugins.session')."""
+        for name in names:
+            module_path = f"agent.plugins.{name}"
             try:
                 module = importlib.import_module(module_path)
             except ImportError:

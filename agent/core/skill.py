@@ -47,9 +47,10 @@ class SkillRegistry:
             self._tool_map[tool.name] = skill
         logger.info("Skill registered: %s (tools: %s)", skill.name, [t.name for t in skill.tools])
 
-    def load_modules(self, module_paths: list[str]) -> None:
-        """Dynamically load skill modules and register all Skill subclasses found."""
-        for module_path in module_paths:
+    def load_modules(self, names: list[str]) -> None:
+        """Load skill modules by short name (e.g. 'websearch' → 'agent.skills.websearch')."""
+        for name in names:
+            module_path = f"agent.skills.{name}"
             try:
                 module = importlib.import_module(module_path)
             except ImportError:

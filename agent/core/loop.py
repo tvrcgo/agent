@@ -22,6 +22,14 @@ from agent.core.llm import OpenAIProvider, LLMResponse, ToolCall
 logger = logging.getLogger(__name__)
 
 
+class JobAborted(Exception):
+    """Raised by a plugin hook to abort the current job with a user-facing message."""
+
+    def __init__(self, message: str = "Job aborted") -> None:
+        self.message = message
+        super().__init__(message)
+
+
 class AgentLoop:
     """Autonomous reasoning loop: Think → Act → Observe → repeat until done.
 
@@ -72,7 +80,7 @@ class AgentLoop:
             ctx = PluginContext(
                 session_id=session.session_id,
                 client=session,
-                data={"action": msg.action},
+                data=msg.data,
             )
             ctx.llm = self._llm
             await self._plugins.emit(f"command:{msg.action}", ctx)
@@ -85,11 +93,9 @@ class AgentLoop:
         )
         await self._plugins.emit("before_job", ctx)
 
-        # Already running: content appended, loop will pick it up
         if self.is_running(session):
             return
 
-        # Check concurrent limit
         active = sum(1 for t in self._jobs.values() if not t.done())
         if active >= self._max_concurrent:
             await session.emit(
@@ -154,6 +160,12 @@ class AgentLoop:
             logger.info("Job cancelled, session=%s", session_key)
             ctx.data["reason"] = "cancelled"
             await self._plugins.emit("on_complete", ctx)
+        except JobAborted as e:
+            logger.info("Job aborted, session=%s: %s", session_key, e.message)
+            await ctx.client.emit(MessageEvent(content=e.message))
+            ctx.data["reason"] = "cancelled"
+            await self._plugins.emit("on_complete", ctx)
+            await ctx.client.emit(StatusEvent(state="done"))
         except Exception as e:
             logger.exception("Error in agent loop")
             await ctx.client.emit(ErrorEvent(code="internal", message=str(e)))
@@ -167,7 +179,6 @@ class AgentLoop:
         self, tool_call: ToolCall, ctx: PluginContext
     ) -> None:
         ctx.data["tool_call"] = tool_call
-        await self._plugins.emit("before_tool", ctx)
 
         await ctx.client.emit(
             ToolCallEvent(
@@ -176,6 +187,8 @@ class AgentLoop:
                 arguments=tool_call.arguments,
             )
         )
+
+        await self._plugins.emit("before_tool", ctx)
 
         result = await self._skills.execute(
             tool_call.name, tool_call.arguments
