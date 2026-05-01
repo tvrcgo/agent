@@ -18,7 +18,7 @@ from agent.core.ws import (
     ToolResultEvent,
     UserMessage,
 )
-from agent.core.llm import LLMProvider, LLMResponse, ToolCall
+from agent.core.llm import OpenAIProvider, LLMResponse, ToolCall
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +34,7 @@ class AgentLoop:
 
     def __init__(
         self,
-        llm: LLMProvider,
+        llm: OpenAIProvider,
         skills: SkillRegistry,
         plugins: PluginRegistry,
         max_iterations: int = 100,

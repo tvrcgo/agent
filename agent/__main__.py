@@ -9,7 +9,7 @@ from agent.core.loop import AgentLoop
 from agent.core.plugin import PluginRegistry
 from agent.core.skill import SkillRegistry
 from agent.core.ws import WebSocketServer
-from agent.providers import create_llm
+from agent.core.llm import OpenAIProvider
 
 logging.basicConfig(
     level=logging.INFO,
@@ -30,7 +30,11 @@ async def main() -> None:
     logger.info("Config loaded: model=%s, ws=%s:%d", config.model.name, config.ws.host, config.ws.port)
 
     # LLM
-    llm = create_llm(config.model)
+    llm = OpenAIProvider(
+        base_url=config.model.base_url,
+        api_key=config.model.api_key,
+        model=config.model.name,
+    )
 
     # Skills (tools for LLM)
     skills = SkillRegistry()
