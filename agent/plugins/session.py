@@ -26,7 +26,7 @@ class _SessionState:
 class SessionPlugin(Plugin):
     """Manages per-session context with append-only JSONL persistence.
 
-    On cold start, only the tail max_context_messages lines are read back.
+    On cold start, only the tail max_load_messages lines are read back.
     Messages are written to disk immediately (append-only). Compaction is
     pure in-memory, triggered by token threshold, not message count.
     """
@@ -37,7 +37,7 @@ class SessionPlugin(Plugin):
         self._base_path = Path("./data/sessions")
         self._sessions: dict[str, _SessionState] = {}
         self._default_state: _SessionState | None = None
-        self._max_context_messages: int = 100
+        self._max_load_messages: int = 100
         self._max_tokens: int = 65536
         self._compress_threshold: float = 0.9
         self._compress_keep_recent: int = 10
@@ -51,7 +51,7 @@ class SessionPlugin(Plugin):
         registry.on("command:compress", self._on_compress)
 
     def init(self, config: Config) -> None:
-        self._max_context_messages = config.agent.max_context_messages
+        self._max_load_messages = config.agent.max_load_messages
         self._max_tokens = config.agent.max_tokens
         self._compress_threshold = config.agent.compress_threshold
         self._compress_keep_recent = config.agent.compress_keep_recent
@@ -87,8 +87,8 @@ class SessionPlugin(Plugin):
             if state.cold_loaded:
                 logger.warning(
                     "Session %s needs compaction right after cold start — "
-                    "consider increasing max_context_messages (currently %d)",
-                    ctx.session_id, self._max_context_messages,
+                    "consider increasing max_load_messages (currently %d)",
+                    ctx.session_id, self._max_load_messages,
                 )
                 state.cold_loaded = False
             await self._compress(ctx, state)
@@ -179,7 +179,7 @@ class SessionPlugin(Plugin):
                 size = f.tell()
                 if size == 0:
                     return []
-                n = self._max_context_messages
+                n = self._max_load_messages
                 lines: list[str] = []
                 pos = size
                 while pos > 0:

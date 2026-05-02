@@ -51,7 +51,7 @@ model:
 agent:
   max_concurrent_sessions: 10
   max_iterations: 100
-  max_context_messages: 100
+  max_load_messages: 100
   max_tokens: 65536
   compress_threshold: 0.9
   compress_keep_recent: 10

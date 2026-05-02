@@ -18,9 +18,9 @@
 - [ ] 达到 / 超过阈值时返回 `True`
 
 ### 4. compact() 行为
-- [ ] 消息数 > `max_context_messages` 时：旧消息替换为 1 条摘要 + 保留最近 N 条
+- [ ] token 超限触发压缩，保留最近 `compress_keep_recent` 条 + summary
 - [ ] 摘要消息以 `[Previous conversation summary]` 开头
-- [ ] 消息数 ≤ `max_context_messages` 时 no-op
+- [ ] token 未超限时不触发压缩
 - [ ] `_last_prompt_tokens` 重置为 0
 
 ### 5. 持久化 round-trip
@@ -37,7 +37,7 @@
 ### 7. 边界情况
 - [ ] 空内存不报错
 - [ ] 只有 system prompt 不触发压缩
-- [ ] `max_context_messages` 大于存储量时正常返回
+- [ ] `max_load_messages` 大于存储量时正常返回
 - [ ] 冷启后 token 超限自动 compact + warning 日志
 
 ## 集成测试 — WebSocket
@@ -75,11 +75,11 @@ from agent.plugins.session import SessionPlugin, _SessionState
 from agent.core.llm import Message
 
 # Helper: create plugin with test params
-def _make_plugin(max_tokens=65536, compress_threshold=0.9, max_context_messages=100):
+def _make_plugin(max_tokens=65536, compress_threshold=0.9, max_load_messages=100):
     p = SessionPlugin()
     p._max_tokens = max_tokens
     p._compress_threshold = compress_threshold
-    p._max_context_messages = max_context_messages
+    p._max_load_messages = max_load_messages
     return p
 
 # 1. get_messages returns all
