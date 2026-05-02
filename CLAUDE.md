@@ -15,7 +15,7 @@ agent/
 │   ├── skill.py          # Skill ABC, SkillRegistry, ToolDefinition
 │   └── ws.py             # WebSocketServer, ClientSession, typed message protocol
 ├── plugins/
-│   ├── session.py        # SessionMemory (buffer+compression) + SessionPlugin (lifecycle)
+│   ├── session.py        # SessionPlugin: per-session memory + JSONL persistence + compression
 │   └── confirm.py        # ConfirmPlugin: intercepts before_tool, blocks on user approval
 ├── skills/
 │   ├── websearch.py      # Web search skill (Google first, multi-engine fallback)
@@ -52,16 +52,6 @@ Commands: `command:<action>` hooks. The loop dispatches `CommandMessage` → `co
 Plugins communicate with the loop exclusively via `ctx.data` dict. SessionPlugin sets `ctx.data["messages"]`; the loop sets `ctx.data["response"]` and `ctx.data["tool_call"]`.
 
 **Rule: loop.py is closed for modification.** All capability extensions — new commands, new behaviors, confirmation flows, context management — must be implemented as plugins via hooks. The only changes allowed in loop.py are bug fixes and hook-point additions. If you find yourself adding business logic to the loop, stop and redesign it as a plugin.
-
-## Gotchas Fixed
-
-1. **DeepSeek reasoning_content must be passed back.** If the API returns `reasoning_content` (thinking), it must be included in subsequent requests as `"reasoning_content"`, or the API returns 400. Handled in `_format_messages()`.
-
-2. **Multi-session race condition.** `SessionPlugin` had a shared `_active_session_id` field that got overwritten when concurrent sessions interleaved hooks. Fixed by passing `session_id` explicitly via `_get_or_load(session_id)` instead of relying on mutable shared state.
-
-3. **Empty string content causes 400.** Some APIs reject `"content": ""` in assistant messages with tool calls. `_format_messages()` uses truthy check (`if msg.content`) to omit empty content.
-
-4. **Docker port publishing needs 0.0.0.0.** Container must bind `0.0.0.0` to accept forwarded connections. Local dev can use either address.
 
 ## Conventions
 

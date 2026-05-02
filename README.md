@@ -54,7 +54,7 @@ agent:
   max_context_messages: 100
   max_tokens: 65536
   compress_threshold: 0.9
-  keep_recent: 10
+  compress_keep_recent: 10
 
 ws:
   host: 0.0.0.0
