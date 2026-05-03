@@ -4,55 +4,52 @@
 
 ## 架构
 
-```
-agent/
-├── __main__.py          # 入口：组装 LLM + skills + plugins + loop + WS server
-├── core/
-│   ├── config.py         # Pydantic 配置，YAML 加载，${VAR} 展开
-│   ├── llm.py            # OpenAIProvider: 异步 httpx 客户端，Message/LLMResponse 类型
-│   ├── loop.py           # AgentLoop + JobAborted: Think→Act→Observe，每会话一个 asyncio Task
-│   ├── plugin.py         # Plugin ABC, PluginRegistry, PluginContext（可变上下文容器）
-│   ├── skill.py          # Skill ABC, SkillRegistry, ToolDefinition
-│   └── ws.py             # WebSocketServer, ClientSession，类型化消息协议
-├── plugins/
-│   ├── session.py        # SessionPlugin: 会话记忆 + JSONL 持久化 + 压缩
-│   └── confirm.py        # ConfirmPlugin: 拦截 before_tool，等待用户审批
-├── skills/
-│   ├── websearch.py      # 网络搜索（Google 优先，多引擎回退）
-│   └── confirm.py        # RequestConfirmationSkill: 存根，实际逻辑在 ConfirmPlugin
-└── AGENTS.md             # Agent 系统提示词
-```
+- **入口** (`__main__.py`)：组装 LLM Provider + SkillRegistry + PluginRegistry + AgentLoop + WebSocketServer
+- **推理循环** (`loop.py`)：AgentLoop 管理 Think→Act→Observe 循环，每个 WebSocket 会话一个独立的 asyncio Task。JobContext（可变上下文）贯穿整个 job 生命周期，所有插件通过 `ctx.data` 共享数据。JobAborted 异常由插件抛出以中断 job。
+- **插件系统** (`plugin.py`)：Plugin ABC + PluginRegistry，基于钩子的生命周期管理。插件注册到特定钩子点（`on_connect`、`before_llm`、`after_tool` 等），按注册顺序同步调用。`command:<action>` 钩子处理 UI 命令。
+- **技能系统** (`skill.py`)：Skill ABC + SkillRegistry，每个 Skill 提供一组 ToolDefinition。LLM 返回 tool_calls 时由对应的 Skill 执行。
+- **WebSocket** (`ws.py`)：类型化消息协议，入站 `chat`/`command`，出站 `message`/`tool_call`/`tool_result`/`status`/`error`。StatusEvent 统一承载状态（`status`）和思维内容（`content`）。
 
 ## 数据流
 
 1. 客户端通过 WebSocket 连接（可选 `?session_id=xxx`）
 2. `AgentLoop` 为每个会话创建 `asyncio.Task`，执行推理循环：
-   - **Think:** 发出 `before_llm` 钩子 → SessionPlugin 检查压缩，设置 `ctx.data["messages"]` → LLM 调用
+   - **Think:** `before_llm` 钩子 → SessionPlugin 检查压缩、消费排队消息、设置 `ctx.data["messages"]` → LLM 调用 → `after_llm` 钩子
    - **Act:** `ToolCallEvent` → `before_tool` 钩子 → `SkillRegistry.execute()` → `ToolResultEvent` → `after_tool` 钩子 → 回到 Think
-   - **Done:** 无工具调用 → 发出 `MessageEvent` → 发出 `on_complete`
-3. SessionPlugin 以 JSONL 格式持久化对话到 `./data/sessions/<session_id>.jsonl`
+   - **Done:** 无工具调用 → 发出 `MessageEvent` → `finally` 中触发 `on_complete` + `StatusEvent`
+3. SessionPlugin 以 JSONL 格式追加写入 `./data/sessions/<session_id>.jsonl`
 
 ## 关键设计
 
+### JobContext
+- 定义在 `loop.py`，是贯穿 job 生命周期的可变上下文，所有插件共享
+- 字段：`session_id`、`client`、`data`（插件间通信字典）、`llm`、`status`
+- 命名：变量统一用 `ctx`
+
 ### WebSocket 消息协议
 - 入站：`chat`（用户输入）和 `command`（UI 操作，带 `action` 字段）
-- 出站：事件包装为 `{"type": "...", "timestamp": "...", "payload": {...}}`
-- Session ID 从 URL query string 获取，不从消息体获取
+- 出站：`{"type": "...", "timestamp": "...", "payload": {...}}`
+- 事件类型：`message`、`tool_call`、`tool_result`、`status`、`error`
+- `StatusEvent`：统一承载状态和思维内容（`status` + 可选 `content`）
+- Session ID 从 URL query string 获取
+
+### 消息排队
+- job 运行中收到的 `chat` 消息进入 `_queue_messages`（按 session）
+- 下一轮迭代开始时，loop 将排队消息写入 `ctx.data["queue_messages"]`
+- SessionPlugin 在 `before_llm` 中消费，追加为 user 消息
 
 ### 上下文管理
-- **`max_load_messages`:** 冷启时从 JSONL 尾部读取的消息条数
-- **基于 token 的压缩:** 当估算 token 达到 `max_tokens * compress_threshold` 时，通过独立 LLM 调用压缩旧消息，保留最近 `compress_keep_recent` 条原文
+- 存储无上限，不设 window_size；冷启时仅加载尾部 `max_load_messages` 条
+- **基于 token 的压缩：** 估算 token 达 `max_tokens * compress_threshold` 时，通过独立 LLM 调用压缩旧消息，保留最近 `compress_keep_recent` 条原文
 - 压缩纯内存操作，不写盘；JSONL 保留完整原始消息
-- 无 `window_size` — 存储无上限，仅加载时有窗口
+- 冷启后 token 仍超限 → 自动 compact + warning 日志
 
-### 插件生命周期（6 个生命周期钩子 + 命令钩子）
-生命周期：`on_connect` → `before_job` → `before_llm` → `after_llm` → `before_tool` → 技能执行 → `after_tool` → ...(循环) → `on_complete`/`on_disconnect`
-
-命令：`command:<action>` 钩子。loop 将 `CommandMessage` 分发到 `command:<action>` 钩子。插件通过注册 `command:<action>` 处理器响应特定操作。`command:cancel` 由 loop 自身处理（核心行为）。
-
-插件与 loop 之间仅通过 `ctx.data` 字典通信。SessionPlugin 设置 `ctx.data["messages"]`；loop 设置 `ctx.data["response"]` 和 `ctx.data["tool_call"]`。
-
-**规则：loop.py 禁止修改。** 所有功能扩展——新命令、新行为、确认流程、上下文管理——必须通过插件钩子实现。loop.py 仅允许 bug 修复和钩子点新增。如果发现自己在 loop 中添加业务逻辑，停下来，重新设计为插件。
+### 插件生命周期
+- 生命周期钩子（6 个）：`on_connect` → `before_job` → `before_llm` → `after_llm` → `before_tool` → skill 执行 → `after_tool` → ...(循环) → `on_complete` / `on_disconnect`
+- 命令钩子：`command:<action>`，loop 将 `CommandMessage` 分发到对应钩子
+- `command:cancel` 由 loop 自身处理（核心行为，非插件）
+- 插件与 loop 仅通过 `ctx.data` 字典通信
+- **规则：loop.py 禁止修改。** 功能扩展必须通过插件钩子实现。loop.py 仅允许 bug 修复和钩子点新增。
 
 ## 约定
 
@@ -64,6 +61,10 @@ agent/
 ### 流程要求
 
 - 处理需求/问题前先出简单的RFC，确认后再执行
+- 每次修改完等用户审查，不要直接 commmit 或 push remote
+- commit 详情逐条列出主要改动点，不要罗列代码
+- 每次 commit 后再同步 docker 部署一次
+- 本地用 `docker-compose up -d --build` 部署，运行日志看 docker 容器日志
 
 ### 编码规范
 
@@ -72,6 +73,3 @@ agent/
 - 从同一个包中 import 多个对象时，不要分散多次 import
 - 每个关注点一个文件，不搞提前抽象
 - 不需要的代码及时清除干净
-- 本地验证用 `docker-compose up -d --build` 部署，运行日志看 docker 容器日志
-- 每次修改完等用户审查，不要直接 commmit 或 push remote
-- 每次 commit 后再同步 docker 部署一次

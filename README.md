@@ -1,8 +1,8 @@
 # Agent
 
-Autonomous WebSocket agent with plugin lifecycle, per-session memory, and LLM-powered context compression.
+容器化运行的 agent，支持插件生命周期、会话记忆和 LLM 上下文压缩。兼容 OpenAI API（DeepSeek）。
 
-## Quick Start
+## 快速开始
 
 ```bash
 uv sync
@@ -10,68 +10,45 @@ export DEEPSEEK_API_KEY=sk-...
 uv run python -m agent
 ```
 
-Agent listens on `ws://localhost:8765`.
+Agent 监听 `ws://localhost:8765`。
 
 ### Docker
 
 ```bash
-DEEPSEEK_API_KEY=sk-... docker compose up -d
+DEEPSEEK_API_KEY=sk-... docker compose up -d --build
 ```
 
-## WebSocket Protocol
+## 配置
 
-### Client → Agent
-
-```json
-{"type": "chat",    "payload": {"content": "Analyze this codebase"}}
-{"type": "command", "payload": {"action": "cancel"}}
-{"type": "command", "payload": {"action": "compress"}}
-```
-
-### Agent → Client
-
-| Type | Description |
-|------|-------------|
-| `thinking` | Agent's reasoning process |
-| `message` | Final text output |
-| `tool_call` | Tool invocation |
-| `tool_result` | Tool execution result |
-| `status` | State change (thinking/acting/idle/done) |
-| `error` | Error report |
-
-## Configuration
+所有配置项有默认值，`config.yml` 覆盖。支持 `${VAR}` 环境变量展开。
 
 ```yaml
 model:
-  provider: openai
   name: deepseek-v4-pro
   base_url: https://api.deepseek.com
   api_key: ${DEEPSEEK_API_KEY}
 
 agent:
-  max_concurrent_sessions: 10
-  max_iterations: 100
-  max_load_messages: 100
-  max_tokens: 65536
+  max_tokens: 128000
   compress_threshold: 0.9
   compress_keep_recent: 10
-
-ws:
-  host: 0.0.0.0
-  port: 8765
+  max_load_messages: 100
 
 skills:
-  modules:
-    - agent.skills.websearch
+  - websearch
+  - confirm
 
 plugins:
-  modules:
-    - agent.plugins.session
+  - session
+  - confirm
+  - workspace
 ```
 
-## Extending
+## 扩展
 
-Create a skill by subclassing `Skill`:
+Skill 给 LLM 提供可调用的工具，Plugin 介入生命周期钩子。详见 `CLAUDE.md`。
+
+### 添加 Skill
 
 ```python
 from agent.core.skill import Skill, ToolDefinition
@@ -87,8 +64,24 @@ class MySkill(Skill):
         ...
 ```
 
-Register via `config.yml` → `skills.modules`.
+### 添加 Plugin
 
-## Agent Definition
+```python
+from agent.core.plugin import Plugin, PluginRegistry
+from agent.core.loop import JobContext
 
-Edit `agent/AGENTS.md` to define the agent's identity, capabilities, and constraints. Injected as the system prompt.
+class MyPlugin(Plugin):
+    name = "my_plugin"
+
+    def register(self, registry: PluginRegistry) -> None:
+        registry.on("before_llm", self._on_before_llm)
+
+    async def _on_before_llm(self, ctx: JobContext) -> None:
+        ...
+```
+
+在 `config.yml` 对应列表中添加模块名即可生效。
+
+## Agent 定义
+
+编辑 `agent/AGENTS.md` 定义 agent 的身份和能力，作为 system prompt 注入。
