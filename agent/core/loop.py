@@ -5,6 +5,8 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
+import websockets.exceptions
+
 from agent.core.plugin import PluginRegistry
 from agent.core.skill import SkillRegistry
 from agent.core.ws import (
@@ -173,6 +175,10 @@ class AgentLoop:
             await ctx.client.emit(MessageEvent(content=e.message))
             ctx.data["reason"] = "aborted"
             ctx.status = "done"
+        except websockets.exceptions.ConnectionClosed:
+            logger.info("Client disconnected, session=%s", session_key)
+            ctx.data["reason"] = "disconnected"
+            ctx.status = "idle"
         except Exception as e:
             logger.exception("Error in agent loop")
             await ctx.client.emit(ErrorEvent(code="internal", message=str(e)))
