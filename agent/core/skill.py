@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import importlib
+import importlib.metadata as _md
 import logging
+import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -48,13 +51,16 @@ class SkillRegistry:
         logger.info("Skill registered: %s (tools: %s)", skill.name, [t.name for t in skill.tools])
 
     def load_modules(self, names: list[str]) -> None:
-        """Load skill modules by short name (e.g. 'websearch' → 'agent.skills.websearch')."""
+        skills_dir = Path(__file__).parent.parent / "skills"
+
         for name in names:
+            self._check_deps(name, skills_dir)
+
             module_path = f"agent.skills.{name}"
             try:
                 module = importlib.import_module(module_path)
             except ImportError:
-                logger.error("Failed to import skill module: %s", module_path, exc_info=True)
+                logger.error("Failed to import skill: %s", module_path, exc_info=True)
                 continue
 
             for attr_name in dir(module):
@@ -69,6 +75,31 @@ class SkillRegistry:
                         self.register(skill)
                     except Exception:
                         logger.error("Failed to instantiate skill %s.%s", module_path, attr_name, exc_info=True)
+
+    class DependencyError(RuntimeError):
+        pass
+
+    @staticmethod
+    def _check_deps(name: str, skills_dir: Path) -> None:
+        req_file = skills_dir / name / "requirements.txt"
+        if not req_file.exists():
+            return
+
+        for line in req_file.read_text().splitlines():
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            m = re.match(r"^([a-zA-Z0-9_.-]+)", line)
+            if not m:
+                continue
+            pkg = m.group(1)
+            try:
+                _md.version(pkg)
+            except _md.PackageNotFoundError:
+                raise SkillRegistry.DependencyError(
+                    f"Skill '{name}' requires '{line}' but it is not installed. "
+                    f"Run 'pip install -r agent/skills/{name}/requirements.txt' or rebuild the image."
+                )
 
     def get_definitions(self) -> list[ToolDefinition]:
         """Return all tool definitions."""
