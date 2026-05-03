@@ -4,44 +4,33 @@ import logging
 
 from ddgs import DDGS
 
-from agent.core.skill import Skill, ToolDefinition
+from agent.core.skill import Tool
 
 logger = logging.getLogger(__name__)
 
 
-class WebSearchSkill(Skill):
+class WebSearchTool(Tool):
     name = "web_search"
+    description = "Search the web for information. Returns title, URL, and snippet for each result."
+    parameters = {
+        "type": "object",
+        "properties": {
+            "query": {"type": "string", "description": "The search query"},
+            "max_results": {
+                "type": "integer",
+                "description": "Maximum number of results to return (default 5)",
+                "default": 5,
+            },
+            "timeout": {
+                "type": "integer",
+                "description": "Timeout in seconds (default 15)",
+                "default": 15,
+            },
+        },
+        "required": ["query"],
+    }
 
-    @property
-    def tools(self) -> list[ToolDefinition]:
-        return [
-            ToolDefinition(
-                name="web_search",
-                description="Search the web for information. Returns title, URL, and snippet for each result.",
-                parameters={
-                    "type": "object",
-                    "properties": {
-                        "query": {
-                            "type": "string",
-                            "description": "The search query",
-                        },
-                        "max_results": {
-                            "type": "integer",
-                            "description": "Maximum number of results to return (default 5)",
-                            "default": 5,
-                        },
-                        "timeout": {
-                            "type": "integer",
-                            "description": "Timeout in seconds (default 15)",
-                            "default": 15,
-                        },
-                    },
-                    "required": ["query"],
-                },
-            )
-        ]
-
-    async def execute(self, tool_name: str, arguments: dict) -> str:
+    async def execute(self, arguments: dict) -> str:
         query = arguments.get("query", "")
         max_results = int(arguments.get("max_results", 5))
         timeout = int(arguments.get("timeout", 15))

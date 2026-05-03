@@ -10,4 +10,5 @@ services:
     volumes:
       - ./data/sessions:/app/data/sessions
       - ./workspace:/app/workspace
+      - ./skills:/app/skills
     restart: unless-stopped

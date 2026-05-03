@@ -19,11 +19,11 @@ class ModelConfig(BaseModel):
 class AgentConfig(BaseModel):
     max_iterations: int = 100
     system_prompt_path: str = "agent/AGENTS.md"
-    max_load_messages: int = 100     # Tail-read window from disk on cold start
-    max_tokens: int = 65536          # Model max context window
-    compress_threshold: float = 0.9  # Trigger compression at 90%
-    compress_keep_recent: int = 10   # Recent messages to keep during compression
-    max_concurrent_sessions: int = 10  # Max parallel sessions
+    max_load_messages: int = 100
+    max_tokens: int = 128000
+    compress_threshold: float = 0.9
+    compress_keep_recent: int = 10
+    max_concurrent_sessions: int = 10
 
 
 class WSConfig(BaseModel):
@@ -57,7 +57,7 @@ def _load_dotenv(path: str | Path = ".env") -> None:
                 value = value[1:-1]
             if key and key not in os.environ:
                 os.environ[key] = value
- 
+
 
 def _expand_env_vars(value: Any) -> Any:
     if isinstance(value, str):

@@ -124,12 +124,12 @@ class WebSocketServer:
         self._host = host
         self._port = port
         self._server: Server | None = None
-        self._handler: MessageHandler | None = None
+        self._message_handler: MessageHandler | None = None
         self._connect_handler: ConnectHandler | None = None
         self._disconnect_handler: DisconnectHandler | None = None
 
     def on_message(self, handler: MessageHandler) -> None:
-        self._handler = handler
+        self._message_handler = handler
 
     def on_connect(self, handler: ConnectHandler) -> None:
         self._connect_handler = handler
@@ -170,8 +170,8 @@ class WebSocketServer:
             async for raw in ws:
                 try:
                     msg = _parse_incoming(str(raw))
-                    if self._handler:
-                        await self._handler(msg, session)
+                    if self._message_handler:
+                        await self._message_handler(msg, session)
                 except (json.JSONDecodeError, ValueError, KeyError) as e:
                     await session.emit(ErrorEvent(code="parse_error", message=str(e)))
         except websockets.ConnectionClosed:

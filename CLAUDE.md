@@ -49,7 +49,7 @@
 - 命令钩子：`command:<action>`，loop 将 `CommandMessage` 分发到对应钩子
 - `command:cancel` 由 loop 自身处理（核心行为，非插件）
 - 插件与 loop 仅通过 `ctx.data` 字典通信
-- **规则：loop.py 禁止修改。** 功能扩展必须通过插件钩子实现。loop.py 仅允许 bug 修复和钩子点新增。
+- **规则：loop.py 禁止扩展功能逻辑** 功能扩展必须通过插件钩子实现。loop.py 仅允许 bug 修复和钩子点新增。
 
 ## 约定
 
@@ -60,16 +60,17 @@
 
 ### 流程要求
 
-- 处理需求/问题前先出简单的RFC，确认后再执行
-- 每次修改完等用户审查，不要直接 commmit 或 push remote
-- commit 详情逐条列出主要改动点，不要罗列代码
-- 每次 commit 后再同步 docker 部署一次
+- 改代码前先出简单的RFC，确认后再执行
+- 测试前要部署代码
 - 本地用 `docker-compose up -d --build` 部署，运行日志看 docker 容器日志
+- 每次修改完等用户审查，不要直接 commmit 或 push remote
+- commit 详情用列表格式逐条列出主要改动点，不要罗列代码
 
 ### 编码规范
 
-- 不写 docstring，不写注释，除非行为出人意料
 - 编码风格要保持一致（如同样是响应事件，不能有的是 on_xxx, 有的是 handle_xxx）
-- 从同一个包中 import 多个对象时，不要分散多次 import
-- 每个关注点一个文件，不搞提前抽象
+- 从同一个包中 import 多个对象时，不要分散多次 import；多行 import 间不要留空行，保持整洁
+- agent/skills 中 skill 的依赖要和项目依赖隔离
+- 不写 docstring，不写注释，除非行为出人意料
+- 不搞提前抽象
 - 不需要的代码及时清除干净

@@ -6,8 +6,6 @@ from typing import Any
 
 import httpx
 
-from agent.core.skill import ToolDefinition
-
 
 @dataclass
 class ToolCall:
@@ -25,7 +23,7 @@ class Usage:
 
 @dataclass
 class Message:
-    role: str  # "system" | "user" | "assistant" | "tool"
+    role: str
     content: str | None = None
     tool_calls: list[ToolCall] | None = None
     tool_call_id: str | None = None
@@ -62,7 +60,7 @@ class OpenAIProvider:
     async def chat(
         self,
         messages: list[Message],
-        tools: list[ToolDefinition] | None = None,
+        tools: list[dict[str, Any]] | None = None,
     ) -> LLMResponse:
         payload: dict[str, Any] = {
             "model": self._model,
@@ -103,18 +101,8 @@ class OpenAIProvider:
             formatted.append(m)
         return formatted
 
-    def _format_tools(self, tools: list[ToolDefinition]) -> list[dict[str, Any]]:
-        return [
-            {
-                "type": "function",
-                "function": {
-                    "name": tool.name,
-                    "description": tool.description,
-                    "parameters": tool.parameters,
-                },
-            }
-            for tool in tools
-        ]
+    def _format_tools(self, tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return [{"type": "function", "function": t} for t in tools]
 
     def _parse_response(self, data: dict[str, Any]) -> LLMResponse:
         choice = data["choices"][0]

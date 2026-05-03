@@ -50,12 +50,13 @@ class AgentLoop:
         skills: SkillRegistry,
         plugins: PluginRegistry,
         max_iterations: int = 100,
+        max_concurrent: int = 10,
     ) -> None:
         self._llm = llm
         self._skills = skills
         self._plugins = plugins
         self._max_iterations = max_iterations
-        self._max_concurrent: int = 10
+        self._max_concurrent = max_concurrent
         self._jobs: dict[str, asyncio.Task[None]] = {}
         self._queue_messages: dict[str, list[str]] = {}
 
@@ -118,14 +119,15 @@ class AgentLoop:
     async def _run_loop(self, ctx: JobContext, session_key: str) -> None:
         try:
             for _ in range(self._max_iterations):
+                ctx.llm = self._llm
                 ctx.data["queue_messages"] = self._queue_messages.pop(session_key, None)
+                ctx.data["skills_prompt"] = self._skills.get_skills_prompt()
 
                 await ctx.client.emit(StatusEvent(status="thinking"))
-                ctx.llm = self._llm
                 await self._plugins.emit("before_llm", ctx)
 
                 messages = ctx.data.get("messages", [])
-                tools = self._skills.get_definitions()
+                tools = self._skills.get_tools_def()
                 response: LLMResponse = await self._llm.chat(
                     messages=messages,
                     tools=tools if tools else None,
@@ -197,9 +199,8 @@ class AgentLoop:
 
         try:
             await self._plugins.emit("before_tool", ctx)
-            result = await self._skills.execute(
-                tool_call.name, tool_call.arguments
-            )
+            tool = self._skills.get_tool(tool_call.name)
+            result = await tool.execute(tool_call.arguments) if tool else f"Error: unknown tool '{tool_call.name}'"
         except Exception as e:
             ctx.data["result"] = str(e)
             await self._plugins.emit("after_tool", ctx)

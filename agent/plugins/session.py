@@ -40,6 +40,7 @@ class SessionPlugin(Plugin):
 
     def register(self, registry: PluginRegistry) -> None:
         registry.on("on_connect", self._on_connect)
+        registry.on("on_disconnect", self._on_disconnect)
         registry.on("before_job", self._on_before_job)
         registry.on("before_llm", self._on_before_llm)
         registry.on("after_llm", self._on_after_llm)
@@ -68,6 +69,9 @@ class SessionPlugin(Plugin):
     async def _on_connect(self, ctx: JobContext) -> None:
         self._get_or_load(ctx.session_id)
 
+    async def _on_disconnect(self, ctx: JobContext) -> None:
+        self._sessions.pop(ctx.session_id, None)
+
     async def _on_before_job(self, ctx: JobContext) -> None:
         content = ctx.data.get("content", "")
         if not content:
@@ -79,12 +83,16 @@ class SessionPlugin(Plugin):
     async def _on_before_llm(self, ctx: JobContext) -> None:
         state = self._get_or_load(ctx.session_id)
 
-        # Consume queued messages from mid-job user input
         queue = ctx.data.pop("queue_messages", None)
         if queue:
             for content in queue:
                 state.messages.append(Message(role="user", content=content))
                 self._append(ctx.session_id, {"role": "user", "content": content})
+
+        msgs = self._get_messages(state)
+        if skills_prompt := ctx.data.get("skills_prompt"):
+            if msgs and msgs[0].role == "system":
+                msgs[0] = Message(role="system", content=msgs[0].content + "\n\n" + skills_prompt)
 
         if self._needs_compression(state):
             if state.cold_loaded:
@@ -95,7 +103,9 @@ class SessionPlugin(Plugin):
                 )
                 state.cold_loaded = False
             await self._compress(ctx, state)
-        ctx.data["messages"] = self._get_messages(state)
+            msgs = self._get_messages(state)
+
+        ctx.data["messages"] = msgs
 
     async def _on_after_llm(self, ctx: JobContext) -> None:
         response = ctx.data.get("response")
@@ -130,11 +140,11 @@ class SessionPlugin(Plugin):
 
 
     def _get_or_load(self, session_id: str | None) -> _SessionState:
-        if session_id and session_id not in self._sessions:
+        if not session_id:
+            return self._default_state or _SessionState()
+        if session_id not in self._sessions:
             self._sessions[session_id] = self._load_session(session_id)
-        if session_id and session_id in self._sessions:
-            return self._sessions[session_id]
-        return self._default_state or _SessionState()
+        return self._sessions[session_id]
 
     def _load_session(self, session_id: str) -> _SessionState:
         path = self._session_file(session_id)
@@ -303,8 +313,6 @@ class SessionPlugin(Plugin):
 
     @staticmethod
     def _deserialize_message(d: dict[str, Any]) -> Message:
-        from agent.core.llm import ToolCall
-
         tool_calls = None
         if "tool_calls" in d:
             tool_calls = [

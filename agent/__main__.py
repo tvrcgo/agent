@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from pathlib import Path
 
 from agent.core.config import load_config
 from agent.core.loop import AgentLoop
@@ -18,44 +17,33 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def load_system_prompt(path: str = "agent/AGENTS.md") -> str:
-    p = Path(path)
-    if p.exists():
-        return p.read_text()
-    return ""
-
-
 async def main() -> None:
     config = load_config()
     logger.info("Config loaded: model=%s, ws=%s:%d", config.model.name, config.ws.host, config.ws.port)
 
-    # LLM
     llm = OpenAIProvider(
         base_url=config.model.base_url,
         api_key=config.model.api_key,
         model=config.model.name,
     )
 
-    # Skills (tools for LLM)
     skills = SkillRegistry()
     if config.skills:
         skills.load_modules(config.skills)
+    skills.load_skills()
 
-    # Plugins (lifecycle hooks)
     plugins = PluginRegistry()
     if config.plugins:
         plugins.load_modules(config.plugins, config)
 
-    # Agent loop
     loop = AgentLoop(
         llm=llm,
         skills=skills,
         plugins=plugins,
         max_iterations=config.agent.max_iterations,
+        max_concurrent=config.agent.max_concurrent_sessions,
     )
-    loop._max_concurrent = config.agent.max_concurrent_sessions
 
-    # WebSocket server
     ws = WebSocketServer(host=config.ws.host, port=config.ws.port)
     ws.on_connect(loop.on_connect)
     ws.on_message(loop.on_message)

@@ -132,7 +132,7 @@ async def test_tool_call_protocol():
     """ToolCallEvent/ToolResultEvent have correct shape."""
     print("\n=== Scenario 6: Tool Call Protocol ===")
     async with websockets.connect(WS_URL) as ws:
-        await ws.send(_chat("echo hello"))
+        await ws.send(_chat("use web_search to search for Python asyncio"))
         msgs = await _collect(ws, timeout=30)
 
         tool_calls = [m for m in msgs if m["type"] == "tool_call"]
