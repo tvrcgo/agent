@@ -6,7 +6,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, TYPE_CHECKING
 
-from agent.core.plugin import Plugin, PluginRegistry, PluginContext
+from agent.core.plugin import Plugin, PluginRegistry
+from agent.core.loop import JobContext
 from agent.core.llm import Message, ToolCall
 
 if TYPE_CHECKING:
@@ -24,12 +25,7 @@ class _SessionState:
 
 
 class SessionPlugin(Plugin):
-    """Manages per-session context with append-only JSONL persistence.
-
-    On cold start, only the tail max_load_messages lines are read back.
-    Messages are written to disk immediately (append-only). Compaction is
-    pure in-memory, triggered by token threshold, not message count.
-    """
+    """Per-session message store with JSONL persistence and auto-compression."""
 
     name = "session"
 
@@ -68,12 +64,11 @@ class SessionPlugin(Plugin):
         self._sessions.clear()
         logger.info("SessionPlugin shut down")
 
-    # --- Hook handlers ---
 
-    async def _on_connect(self, ctx: PluginContext) -> None:
+    async def _on_connect(self, ctx: JobContext) -> None:
         self._get_or_load(ctx.session_id)
 
-    async def _on_before_job(self, ctx: PluginContext) -> None:
+    async def _on_before_job(self, ctx: JobContext) -> None:
         content = ctx.data.get("content", "")
         if not content:
             return
@@ -81,8 +76,16 @@ class SessionPlugin(Plugin):
         state.messages.append(Message(role="user", content=content))
         self._append(ctx.session_id, {"role": "user", "content": content})
 
-    async def _on_before_llm(self, ctx: PluginContext) -> None:
+    async def _on_before_llm(self, ctx: JobContext) -> None:
         state = self._get_or_load(ctx.session_id)
+
+        # Consume queued messages from mid-job user input
+        queue = ctx.data.pop("queue_messages", None)
+        if queue:
+            for content in queue:
+                state.messages.append(Message(role="user", content=content))
+                self._append(ctx.session_id, {"role": "user", "content": content})
+
         if self._needs_compression(state):
             if state.cold_loaded:
                 logger.warning(
@@ -94,7 +97,7 @@ class SessionPlugin(Plugin):
             await self._compress(ctx, state)
         ctx.data["messages"] = self._get_messages(state)
 
-    async def _on_after_llm(self, ctx: PluginContext) -> None:
+    async def _on_after_llm(self, ctx: JobContext) -> None:
         response = ctx.data.get("response")
         if response is None:
             return
@@ -109,7 +112,7 @@ class SessionPlugin(Plugin):
             state.last_prompt_tokens = response.usage.prompt_tokens
         self._append(ctx.session_id, self._response_to_dict(response))
 
-    async def _on_after_tool(self, ctx: PluginContext) -> None:
+    async def _on_after_tool(self, ctx: JobContext) -> None:
         tool_call = ctx.data.get("tool_call")
         result = ctx.data.get("result", "")
         if tool_call:
@@ -121,11 +124,10 @@ class SessionPlugin(Plugin):
                 "tool_call_id": tool_call.id,
             })
 
-    async def _on_compress(self, ctx: PluginContext) -> None:
+    async def _on_compress(self, ctx: JobContext) -> None:
         state = self._get_or_load(ctx.session_id)
         await self._compress(ctx, state)
 
-    # --- Internal: session lifecycle ---
 
     def _get_or_load(self, session_id: str | None) -> _SessionState:
         if session_id and session_id not in self._sessions:
@@ -157,7 +159,6 @@ class SessionPlugin(Plugin):
             logger.warning("Failed to load session %s, starting fresh", session_id, exc_info=True)
         return _SessionState()
 
-    # --- Internal: I/O ---
 
     def _append(self, session_id: str | None, msg_dict: dict) -> None:
         if not session_id:
@@ -201,7 +202,6 @@ class SessionPlugin(Plugin):
             logger.warning("Failed to tail-read %s", path, exc_info=True)
             return []
 
-    # --- Internal: token estimation & compression ---
 
     @staticmethod
     def _get_messages(state: _SessionState) -> list[Message]:
@@ -228,7 +228,7 @@ class SessionPlugin(Plugin):
     def _needs_compression(self, state: _SessionState) -> bool:
         return self._estimate_tokens(state) >= int(self._max_tokens * self._compress_threshold)
 
-    async def _compress(self, ctx: PluginContext, state: _SessionState) -> None:
+    async def _compress(self, ctx: JobContext, state: _SessionState) -> None:
         llm = ctx.llm
         if llm is None:
             logger.warning("No llm in context, skipping compression")
@@ -272,7 +272,6 @@ class SessionPlugin(Plugin):
         logger.info("Session compressed: %d messages -> summary + %d recent",
                      len(old), keep_recent)
 
-    # --- Static helpers ---
 
     @staticmethod
     def _response_to_dict(response: Any) -> dict[str, Any]:

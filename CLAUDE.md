@@ -56,9 +56,22 @@ agent/
 
 ## 约定
 
-- 不写 docstring，不写注释，除非行为出人意料
-- 每个关注点一个文件，不搞提前抽象
 - 配置：Pydantic 模型内置默认值，`config.yml` 覆盖
 - 会话存储：`./data/sessions/`，每会话一个 JSONL 文件
 - 默认配置从 `agent/AGENTS.md` 读取系统提示词
 - 测试清单见 `tests/README.md`，集成测试见 `tests/test_ws.py`
+
+### 流程要求
+
+- 处理需求/问题前先出简单的RFC，确认后再执行
+
+### 编码规范
+
+- 不写 docstring，不写注释，除非行为出人意料
+- 编码风格要保持一致（如同样是响应事件，不能有的是 on_xxx, 有的是 handle_xxx）
+- 从同一个包中 import 多个对象时，不要分散多次 import
+- 每个关注点一个文件，不搞提前抽象
+- 不需要的代码及时清除干净
+- 本地验证用 `docker-compose up -d --build` 部署，运行日志看 docker 容器日志
+- 每次修改完等用户审查，不要直接 commmit 或 push remote
+- 每次 commit 后再同步 docker 部署一次

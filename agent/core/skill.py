@@ -17,7 +17,7 @@ class ToolDefinition:
 
 
 class Skill(ABC):
-    """Base class for skills - tools that LLM can call."""
+    """Base class for LLM-callable tools."""
 
     name: str = ""
 
@@ -34,7 +34,7 @@ class Skill(ABC):
 
 
 class SkillRegistry:
-    """Registry for skills - tools that LLM can call."""
+    """Skill/tool registry."""
 
     def __init__(self) -> None:
         self._skills: dict[str, Skill] = {}

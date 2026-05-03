@@ -4,38 +4,20 @@ import importlib
 import logging
 from abc import ABC, abstractmethod
 from collections import defaultdict
-from dataclasses import dataclass, field
 from typing import Any, Callable, Awaitable, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from agent.core.ws import ClientSession
+    from agent.core.loop import JobContext
     from agent.core.config import Config
-    from agent.core.llm import OpenAIProvider
 
 logger = logging.getLogger(__name__)
 
 
-@dataclass
-class PluginContext:
-    """Context passed to every plugin handler.
-
-    Attributes:
-        session_id: The WebSocket session ID (from query string)
-        client: The ClientSession for sending events
-        data: Mutable dict for plugins to share arbitrary data
-    """
-
-    session_id: str | None
-    client: ClientSession
-    data: dict[str, Any] = field(default_factory=dict)
-    llm: OpenAIProvider | None = None
-
-
-PluginHandler = Callable[[PluginContext], Awaitable[None]]
+PluginHandler = Callable[["JobContext"], Awaitable[None]]
 
 
 class Plugin(ABC):
-    """Base class for lifecycle plugins."""
+    """Lifecycle plugin base."""
 
     name: str = ""
 
@@ -45,33 +27,28 @@ class Plugin(ABC):
         ...
 
     def init(self, config: Config) -> None:
-        """Initialize plugin with config. Override if needed."""
         pass
 
     def shutdown(self) -> None:
-        """Cleanup on shutdown. Override if needed."""
         pass
 
 
 class PluginRegistry:
-    """Registry for lifecycle plugins."""
+    """Plugin hook registry."""
 
     def __init__(self) -> None:
         self._hooks: dict[str, list[PluginHandler]] = defaultdict(list)
         self._plugins: dict[str, Plugin] = {}
 
     def on(self, hook_name: str, handler: PluginHandler) -> None:
-        """Register a handler for a hook point."""
         self._hooks[hook_name].append(handler)
 
     def register(self, plugin: Plugin) -> None:
-        """Register a plugin and its hooks."""
         self._plugins[plugin.name] = plugin
         plugin.register(self)
         logger.info("Plugin registered: %s", plugin.name)
 
     def load_modules(self, names: list[str], config: Config) -> None:
-        """Load plugin modules by short name (e.g. 'session' → 'agent.plugins.session')."""
         for name in names:
             module_path = f"agent.plugins.{name}"
             try:
@@ -94,12 +71,10 @@ class PluginRegistry:
                     except Exception:
                         logger.error("Failed to instantiate plugin %s.%s", module_path, attr_name, exc_info=True)
 
-    async def emit(self, hook_name: str, ctx: PluginContext) -> None:
-        """Trigger all handlers for a hook point in registration order."""
+    async def emit(self, hook_name: str, ctx: JobContext) -> None:
         for handler in self._hooks[hook_name]:
             await handler(ctx)
 
     def shutdown_all(self) -> None:
-        """Shutdown all registered plugins."""
         for plugin in reversed(list(self._plugins.values())):
             plugin.shutdown()

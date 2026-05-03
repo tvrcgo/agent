@@ -40,7 +40,6 @@ class Config(BaseModel):
 
 
 def _load_dotenv(path: str | Path = ".env") -> None:
-    """Load environment variables from a .env file if it exists."""
     p = Path(path)
     if not p.exists():
         return
@@ -61,7 +60,6 @@ def _load_dotenv(path: str | Path = ".env") -> None:
  
 
 def _expand_env_vars(value: Any) -> Any:
-    """Recursively expand ${VAR} references in string values."""
     if isinstance(value, str):
         return re.sub(
             r"\$\{(\w+)\}",

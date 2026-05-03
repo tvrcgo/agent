@@ -41,7 +41,7 @@ class LLMResponse:
 
 
 class OpenAIProvider:
-    """OpenAI-compatible LLM client (OpenAI, DeepSeek, vLLM, Ollama, etc.)."""
+    """OpenAI-compatible LLM client."""
 
     def __init__(self, base_url: str, api_key: str, model: str) -> None:
         self._base_url = base_url.rstrip("/")

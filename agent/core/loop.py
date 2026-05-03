@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from dataclasses import dataclass, field
 from typing import Any
 
-from agent.core.plugin import PluginRegistry, PluginContext
+from agent.core.plugin import PluginRegistry
 from agent.core.skill import SkillRegistry
 from agent.core.ws import (
     ChatMessage,
@@ -13,7 +14,6 @@ from agent.core.ws import (
     ErrorEvent,
     MessageEvent,
     StatusEvent,
-    ThinkingEvent,
     ToolCallEvent,
     ToolResultEvent,
 )
@@ -23,19 +23,26 @@ logger = logging.getLogger(__name__)
 
 
 class JobAborted(Exception):
-    """Raised by a plugin hook to abort the current job with a user-facing message."""
+    """Raised by a plugin hook to abort the current job."""
 
     def __init__(self, message: str = "Job aborted") -> None:
         self.message = message
         super().__init__(message)
 
 
-class AgentLoop:
-    """Autonomous reasoning loop: Think → Act → Observe → repeat until done.
+@dataclass
+class JobContext:
+    """Mutable context shared by plugins across a job lifecycle."""
 
-    Supports multiple concurrent WebSocket sessions. Each session runs an
-    independent job — starting or cancelling one does not affect others.
-    """
+    session_id: str | None
+    client: ClientSession
+    data: dict[str, Any] = field(default_factory=dict)
+    llm: OpenAIProvider | None = None
+    status: str = "idle"
+
+
+class AgentLoop:
+    """Think → Act → Observe loop. One asyncio.Task per session."""
 
     def __init__(
         self,
@@ -50,8 +57,9 @@ class AgentLoop:
         self._max_iterations = max_iterations
         self._max_concurrent: int = 10
         self._jobs: dict[str, asyncio.Task[None]] = {}
+        self._queue_messages: dict[str, list[str]] = {}
 
-        # Core commands handled by the loop itself
+        # Core commands
         self._plugins.on("command:cancel", self._on_command_cancel)
 
     @staticmethod
@@ -64,20 +72,24 @@ class AgentLoop:
         return t is not None and not t.done()
 
     async def on_connect(self, session: ClientSession) -> None:
-        ctx = PluginContext(session_id=session.session_id, client=session)
+        ctx = JobContext(session_id=session.session_id, client=session)
         await self._plugins.emit("on_connect", ctx)
 
     async def on_disconnect(self, session: ClientSession) -> None:
-        ctx = PluginContext(session_id=session.session_id, client=session)
+        ctx = JobContext(session_id=session.session_id, client=session)
         await self._plugins.emit("on_disconnect", ctx)
 
     async def on_message(
         self, msg: Any, session: ClientSession
     ) -> None:
         if isinstance(msg, ChatMessage):
+            if self.is_running(session):
+                key = self._session_key(session)
+                self._queue_messages.setdefault(key, []).append(msg.content)
+                return
             await self._start_job(msg.content, session)
         elif isinstance(msg, CommandMessage):
-            ctx = PluginContext(
+            ctx = JobContext(
                 session_id=session.session_id,
                 client=session,
                 data=msg.data,
@@ -86,16 +98,6 @@ class AgentLoop:
             await self._plugins.emit(f"command:{msg.action}", ctx)
 
     async def _start_job(self, content: str, session: ClientSession) -> None:
-        ctx = PluginContext(
-            session_id=session.session_id,
-            client=session,
-            data={"content": content},
-        )
-        await self._plugins.emit("before_job", ctx)
-
-        if self.is_running(session):
-            return
-
         active = sum(1 for t in self._jobs.values() if not t.done())
         if active >= self._max_concurrent:
             await session.emit(
@@ -103,14 +105,22 @@ class AgentLoop:
             )
             return
 
+        ctx = JobContext(
+            session_id=session.session_id,
+            client=session,
+            data={"content": content},
+        )
+        await self._plugins.emit("before_job", ctx)
+
         key = self._session_key(session)
         self._jobs[key] = asyncio.create_task(self._run_loop(ctx, key))
 
-    async def _run_loop(self, ctx: PluginContext, session_key: str) -> None:
+    async def _run_loop(self, ctx: JobContext, session_key: str) -> None:
         try:
             for _ in range(self._max_iterations):
-                # Think
-                await ctx.client.emit(StatusEvent(state="thinking"))
+                ctx.data["queue_messages"] = self._queue_messages.pop(session_key, None)
+
+                await ctx.client.emit(StatusEvent(status="thinking"))
                 ctx.llm = self._llm
                 await self._plugins.emit("before_llm", ctx)
 
@@ -124,26 +134,23 @@ class AgentLoop:
                 ctx.data["response"] = response
                 await self._plugins.emit("after_llm", ctx)
 
-                # Emit thinking if present
+                # Emit thinking content if present
                 if response.thinking:
-                    await ctx.client.emit(ThinkingEvent(content=response.thinking))
+                    await ctx.client.emit(StatusEvent(status="thinking", content=response.thinking))
 
-                # Act: execute tool calls
                 if response.tool_calls:
-                    await ctx.client.emit(StatusEvent(state="acting"))
+                    await ctx.client.emit(StatusEvent(status="acting"))
 
                     for tool_call in response.tool_calls:
                         await self._execute_tool(tool_call, ctx)
 
                     continue
 
-                # Done: no tool calls means job is complete
                 if response.text:
                     await ctx.client.emit(MessageEvent(content=response.text))
 
                 ctx.data["reason"] = "done"
-                await self._plugins.emit("on_complete", ctx)
-                await ctx.client.emit(StatusEvent(state="done"))
+                ctx.status = "done"
                 break
             else:
                 await ctx.client.emit(
@@ -153,30 +160,30 @@ class AgentLoop:
                     )
                 )
                 ctx.data["reason"] = "error"
-                await self._plugins.emit("on_complete", ctx)
-                await ctx.client.emit(StatusEvent(state="done"))
+                ctx.status = "done"
 
         except asyncio.CancelledError:
             logger.info("Job cancelled, session=%s", session_key)
             ctx.data["reason"] = "cancelled"
-            await self._plugins.emit("on_complete", ctx)
+            ctx.status = "idle"
         except JobAborted as e:
             logger.info("Job aborted, session=%s: %s", session_key, e.message)
             await ctx.client.emit(MessageEvent(content=e.message))
-            ctx.data["reason"] = "cancelled"
-            await self._plugins.emit("on_complete", ctx)
-            await ctx.client.emit(StatusEvent(state="done"))
+            ctx.data["reason"] = "aborted"
+            ctx.status = "done"
         except Exception as e:
             logger.exception("Error in agent loop")
             await ctx.client.emit(ErrorEvent(code="internal", message=str(e)))
             ctx.data["reason"] = "error"
-            await self._plugins.emit("on_complete", ctx)
-            await ctx.client.emit(StatusEvent(state="idle"))
+            ctx.status = "idle"
         finally:
+            await self._plugins.emit("on_complete", ctx)
+            await ctx.client.emit(StatusEvent(status=ctx.status))
             self._jobs.pop(session_key, None)
+            self._queue_messages.pop(session_key, None)
 
     async def _execute_tool(
-        self, tool_call: ToolCall, ctx: PluginContext
+        self, tool_call: ToolCall, ctx: JobContext
     ) -> None:
         ctx.data["tool_call"] = tool_call
 
@@ -188,11 +195,15 @@ class AgentLoop:
             )
         )
 
-        await self._plugins.emit("before_tool", ctx)
-
-        result = await self._skills.execute(
-            tool_call.name, tool_call.arguments
-        )
+        try:
+            await self._plugins.emit("before_tool", ctx)
+            result = await self._skills.execute(
+                tool_call.name, tool_call.arguments
+            )
+        except Exception as e:
+            ctx.data["result"] = str(e)
+            await self._plugins.emit("after_tool", ctx)
+            raise
 
         await ctx.client.emit(
             ToolResultEvent(
@@ -205,9 +216,8 @@ class AgentLoop:
         ctx.data["result"] = result
         await self._plugins.emit("after_tool", ctx)
 
-    async def _on_command_cancel(self, ctx: PluginContext) -> None:
+    async def _on_command_cancel(self, ctx: JobContext) -> None:
         key = self._session_key(ctx.client)
         t = self._jobs.get(key)
         if t and not t.done():
             t.cancel()
-        await ctx.client.emit(StatusEvent(state="idle"))

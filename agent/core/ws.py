@@ -13,14 +13,6 @@ from websockets.asyncio.server import Server, ServerConnection
 logger = logging.getLogger(__name__)
 
 
-# --- Event types emitted by the agent ---
-
-
-@dataclass
-class ThinkingEvent:
-    content: str
-    type: str = "thinking"
-
 
 @dataclass
 class MessageEvent:
@@ -47,7 +39,8 @@ class ToolResultEvent:
 
 @dataclass
 class StatusEvent:
-    state: str  # "thinking" | "acting" | "waiting" | "idle" | "done"
+    status: str  # "thinking" | "acting" | "waiting" | "idle" | "done"
+    content: str = ""
     type: str = "status"
 
 
@@ -59,8 +52,7 @@ class ErrorEvent:
 
 
 AgentEvent = (
-    ThinkingEvent
-    | MessageEvent
+    MessageEvent
     | ToolCallEvent
     | ToolResultEvent
     | StatusEvent
@@ -79,18 +71,15 @@ def _serialize_event(event: AgentEvent) -> str:
     return json.dumps(envelope, ensure_ascii=False)
 
 
-# --- Incoming message types ---
-
 
 @dataclass
 class ChatMessage:
-    """User-typed conversation message."""
     content: str
 
 
 @dataclass
 class CommandMessage:
-    """UI-triggered command. ``action`` routes to ``command:<action>`` hook, ``data`` is handler-specific."""
+    """Routes action to command:<action> hook."""
     action: str
     data: dict[str, Any] = field(default_factory=dict)
 
@@ -113,7 +102,6 @@ def _parse_incoming(raw: str) -> IncomingMessage:
             raise ValueError(f"Unknown message type: {msg_type}")
 
 
-# --- WebSocket Server ---
 
 MessageHandler = Callable[[IncomingMessage, "ClientSession"], Coroutine[Any, Any, None]]
 ConnectHandler = Callable[["ClientSession"], Coroutine[Any, Any, None]]
@@ -121,7 +109,6 @@ DisconnectHandler = Callable[["ClientSession"], Coroutine[Any, Any, None]]
 
 
 class ClientSession:
-    """Represents a connected WebSocket client."""
 
     def __init__(self, ws: ServerConnection) -> None:
         self._ws = ws
@@ -132,7 +119,6 @@ class ClientSession:
 
 
 class WebSocketServer:
-    """WebSocket server for agent communication."""
 
     def __init__(self, host: str = "0.0.0.0", port: int = 8765) -> None:
         self._host = host
@@ -167,7 +153,6 @@ class WebSocketServer:
     async def _handle_connection(self, ws: ServerConnection) -> None:
         session = ClientSession(ws)
 
-        # Extract session_id from query string: ws://host:port?session_id=xxx
         request_path = ws.request.path if ws.request else ""
         parsed = urlparse(str(request_path))
         qs = parse_qs(parsed.query)
@@ -175,7 +160,6 @@ class WebSocketServer:
 
         logger.info(f"Client connected: {ws.remote_address}, session_id={session.session_id}")
 
-        # Notify connection handler (loads session context)
         if self._connect_handler:
             try:
                 await self._connect_handler(session)
