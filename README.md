@@ -1,8 +1,16 @@
 # Agent
 
-容器化运行的 agent，支持插件生命周期、会话记忆和 LLM 上下文压缩。兼容 OpenAI API（DeepSeek）。
+容器化运行的 agent，插件生命周期 + 会话记忆 + LLM 上下文压缩。兼容 OpenAI API。
 
-## 快速开始
+## 主要特性
+
+- 多会话并行，浏览器端 SQLite 持久化
+- 上下文自动压缩，token 超限时通过独立 LLM 调用压缩旧消息
+- 插件系统：生命周期钩子 + 命令钩子，功能扩展不修改核心代码
+- 技能系统：LLM 可调用工具，每个技能独立依赖隔离
+- Playground：单文件 WebSocket 客户端，左右分栏，支持 `/cancel`、`/compress` 命令
+
+## 部署
 
 ```bash
 uv sync
@@ -18,9 +26,11 @@ Agent 监听 `ws://localhost:8765`。
 DEEPSEEK_API_KEY=sk-... docker compose up -d --build
 ```
 
+启动 agent（8765）和 playground（8766）两个服务。
+
 ## 配置
 
-所有配置项有默认值，`config.yml` 覆盖。支持 `${VAR}` 环境变量展开。
+`config.yml` 覆盖默认值，支持 `${VAR}` 环境变量展开。`agent/AGENTS.md` 作为 system prompt。
 
 ```yaml
 model:
@@ -44,44 +54,3 @@ plugins:
   - workspace
 ```
 
-## 扩展
-
-Skill 给 LLM 提供可调用的工具，Plugin 介入生命周期钩子。详见 `CLAUDE.md`。
-
-### 添加 Skill
-
-```python
-from agent.core.skill import Skill, ToolDefinition
-
-class MySkill(Skill):
-    name = "my_skill"
-
-    @property
-    def tools(self) -> list[ToolDefinition]:
-        return [ToolDefinition(name="my_tool", description="...", parameters={...})]
-
-    async def execute(self, tool_name: str, arguments: dict) -> str:
-        ...
-```
-
-### 添加 Plugin
-
-```python
-from agent.core.plugin import Plugin, PluginRegistry
-from agent.core.loop import JobContext
-
-class MyPlugin(Plugin):
-    name = "my_plugin"
-
-    def register(self, registry: PluginRegistry) -> None:
-        registry.on("before_llm", self._on_before_llm)
-
-    async def _on_before_llm(self, ctx: JobContext) -> None:
-        ...
-```
-
-在 `config.yml` 对应列表中添加模块名即可生效。
-
-## Agent 定义
-
-编辑 `agent/AGENTS.md` 定义 agent 的身份和能力，作为 system prompt 注入。
