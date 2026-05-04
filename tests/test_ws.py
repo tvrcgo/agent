@@ -33,7 +33,7 @@ async def _collect(ws, timeout=60):
 async def test_status_structure():
     """StatusEvent uses 'status' field (not 'state')."""
     print("=== Scenario 1: StatusEvent Structure ===")
-    async with websockets.connect(WS_URL) as ws:
+    async with websockets.connect(f"{WS_URL}?session_id=test-status-{uuid.uuid4().hex[:6]}") as ws:
         await ws.send(_chat("hello"))
         msgs = await _collect(ws, timeout=30)
 
@@ -96,7 +96,7 @@ async def test_multi_session():
 async def test_error_handling():
     """Invalid JSON gets parse_error event."""
     print("\n=== Scenario 4: Error Handling ===")
-    async with websockets.connect(WS_URL) as ws:
+    async with websockets.connect(f"{WS_URL}?session_id=test-err-{uuid.uuid4().hex[:6]}") as ws:
         await ws.send("not json at all")
         try:
             raw = await asyncio.wait_for(ws.recv(), timeout=10)
@@ -113,7 +113,7 @@ async def test_error_handling():
 async def test_cancel():
     """Cancel command stops a running job."""
     print("\n=== Scenario 5: Cancel ===")
-    async with websockets.connect(WS_URL) as ws:
+    async with websockets.connect(f"{WS_URL}?session_id=test-cancel-{uuid.uuid4().hex[:6]}") as ws:
         await ws.send(_chat("search the web for latest AI news"))
         await asyncio.sleep(2)
         await ws.send(_command("cancel"))
@@ -131,7 +131,7 @@ async def test_cancel():
 async def test_tool_call_protocol():
     """ToolCallEvent/ToolResultEvent have correct shape."""
     print("\n=== Scenario 6: Tool Call Protocol ===")
-    async with websockets.connect(WS_URL, ping_timeout=60) as ws:
+    async with websockets.connect(f"{WS_URL}?session_id=test-tool-{uuid.uuid4().hex[:6]}", ping_timeout=60) as ws:
         await ws.send(_chat("use web_search to search for Python asyncio"))
         msgs = await _collect(ws, timeout=90)
 
@@ -165,12 +165,62 @@ async def test_tool_call_protocol():
 async def test_command_routing():
     """CommandMessage routes to command:<action> hook."""
     print("\n=== Scenario 7: Command Routing ===")
-    async with websockets.connect(WS_URL) as ws:
+    async with websockets.connect(f"{WS_URL}?session_id=test-cmd-{uuid.uuid4().hex[:6]}") as ws:
         await ws.send(_command("compress"))
         await asyncio.sleep(1)
         # Command should not crash; no error = pass
         print("  compress command sent")
         passed = True
+        print("  PASS" if passed else "  FAIL")
+        return passed
+
+
+async def test_disconnect_mid_job():
+    """Forceful disconnect during processing doesn't crash server."""
+    print("\n=== Scenario 8: Disconnect Mid-Job ===")
+    sid = f"abort-{uuid.uuid4().hex[:6]}"
+    try:
+        async with websockets.connect(f"{WS_URL}?session_id={sid}") as ws:
+            await ws.send(_chat("count from 1 to 100, say each number"))
+            await asyncio.sleep(1)
+            await ws.close(1011, "test abort")
+    except Exception:
+        pass
+    print("  connection closed abruptly")
+
+    await asyncio.sleep(2)
+    # Server should still accept new connections, use different session to avoid queuing
+    async with websockets.connect(f"{WS_URL}?session_id=test-reconnect-{uuid.uuid4().hex[:6]}") as ws:
+        await ws.send(_chat("hello after abort"))
+        msgs = await _collect(ws, timeout=30)
+        messages = [m for m in msgs if m["type"] == "message"]
+        passed = len(messages) > 0
+        print(f"  messages after reconnect: {len(messages)}")
+        print("  PASS" if passed else "  FAIL")
+        return passed
+
+
+async def test_rapid_disconnect():
+    """Quick connect-disconnect doesn't leave orphaned state."""
+    print("\n=== Scenario 9: Rapid Disconnect ===")
+    for i in range(3):
+        sid = f"rapid-{uuid.uuid4().hex[:6]}"
+        try:
+            async with websockets.connect(f"{WS_URL}?session_id={sid}") as ws:
+                await ws.send(_chat(f"msg-{i}"))
+                await asyncio.sleep(0.3)
+                await ws.close()
+        except Exception:
+            pass
+        print(f"  round {i+1}: closed")
+
+    await asyncio.sleep(2)
+    # Server should still be alive
+    async with websockets.connect(f"{WS_URL}?session_id=test-final-{uuid.uuid4().hex[:6]}") as ws:
+        await ws.send(_chat("final ping"))
+        msgs = await _collect(ws, timeout=60)
+        passed = len(msgs) > 0
+        print(f"  final messages: {len(msgs)}")
         print("  PASS" if passed else "  FAIL")
         return passed
 
@@ -185,13 +235,15 @@ async def main():
         ("cancel", test_cancel),
         ("tool_call_protocol", test_tool_call_protocol),
         ("command_routing", test_command_routing),
+        ("disconnect_mid_job", test_disconnect_mid_job),
+        ("rapid_disconnect", test_rapid_disconnect),
     ]
 
     for name, fn in scenarios:
         try:
             results[name] = await fn()
         except Exception as e:
-            print(f"  EXCEPTION: {e}")
+            print(f"  EXCEPTION[{type(e).__name__}]: {e}")
             results[name] = False
 
     print("\n" + "=" * 50)

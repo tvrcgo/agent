@@ -115,7 +115,10 @@ class ClientSession:
         self.session_id: str | None = None
 
     async def emit(self, event: AgentEvent) -> None:
-        await self._ws.send(_serialize_event(event))
+        try:
+            await self._ws.send(_serialize_event(event))
+        except websockets.exceptions.ConnectionClosed:
+            pass
 
 
 class WebSocketServer:
@@ -157,6 +160,10 @@ class WebSocketServer:
         parsed = urlparse(str(request_path))
         qs = parse_qs(parsed.query)
         session.session_id = qs.get("session_id", [None])[0]
+        if not session.session_id:
+            await session.emit(ErrorEvent(code="bad_request", message="session_id is required"))
+            await ws.close(4000, "session_id is required")
+            return
 
         logger.info(f"Client connected: {ws.remote_address}, session_id={session.session_id}")
 

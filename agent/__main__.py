@@ -58,7 +58,7 @@ async def main() -> None:
         pass
     finally:
         await ws.stop()
-        plugins.shutdown_all()
+        plugins.unload_all()
         await llm.close()
         logger.info("Agent shut down.")
 

@@ -10,7 +10,7 @@ agent:
   max_load_messages: 100
   max_tokens: 128000
   compress_threshold: 0.9
-  compress_keep_recent: 10
+  compress_keep_recent: 5
 
 ws:
   host: 0.0.0.0

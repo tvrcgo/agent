@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass, field
 from typing import Any
 
 import httpx
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -39,7 +42,6 @@ class LLMResponse:
 
 
 class OpenAIProvider:
-    """OpenAI-compatible LLM client."""
 
     def __init__(self, base_url: str, api_key: str, model: str) -> None:
         self._base_url = base_url.rstrip("/")
@@ -70,11 +72,18 @@ class OpenAIProvider:
         if tools:
             payload["tools"] = self._format_tools(tools)
 
-        resp = await self._client.post("/chat/completions", json=payload)
-        resp.raise_for_status()
-        data = resp.json()
+        try:
+            resp = await self._client.post("/chat/completions", json=payload)
+            resp.raise_for_status()
+        except httpx.HTTPStatusError as e:
+            body = e.response.text[:500] if e.response else ""
+            logger.error("LLM HTTP %s: %s", e.response.status_code, body)
+            raise
+        except Exception:
+            logger.exception("LLM request failed")
+            raise
 
-        return self._parse_response(data)
+        return self._parse_response(resp.json())
 
     def _format_messages(self, messages: list[Message]) -> list[dict[str, Any]]:
         formatted: list[dict[str, Any]] = []

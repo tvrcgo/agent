@@ -25,7 +25,6 @@ logger = logging.getLogger(__name__)
 
 
 class JobAborted(Exception):
-    """Raised by a plugin hook to abort the current job."""
 
     def __init__(self, message: str = "Job aborted") -> None:
         self.message = message
@@ -33,18 +32,21 @@ class JobAborted(Exception):
 
 
 @dataclass
-class JobContext:
-    """Mutable context shared by plugins across a job lifecycle."""
+class AgentContext:
 
     session_id: str | None
     client: ClientSession
     data: dict[str, Any] = field(default_factory=dict)
     llm: OpenAIProvider | None = None
     status: str = "idle"
+    _plugins: PluginRegistry | None = field(default=None, repr=False)
+
+    async def emit(self, hook_name: str) -> None:
+        if self._plugins is not None:
+            await self._plugins.emit(hook_name, self)
 
 
 class AgentLoop:
-    """Think → Act → Observe loop. One asyncio.Task per session."""
 
     def __init__(
         self,
@@ -61,13 +63,35 @@ class AgentLoop:
         self._max_concurrent = max_concurrent
         self._jobs: dict[str, asyncio.Task[None]] = {}
         self._queue_messages: dict[str, list[str]] = {}
+        self._contexts: dict[str, AgentContext] = {}
 
-        # Core commands
         self._plugins.on("command:cancel", self._on_command_cancel)
+
+    def _ensure_ctx(self, session: ClientSession) -> AgentContext:
+        key = self._session_key(session)
+        if key not in self._contexts:
+            self._contexts[key] = AgentContext(
+                session_id=session.session_id,
+                client=session,
+                llm=self._llm,
+                _plugins=self._plugins,
+            )
+        return self._contexts[key]
+
+    def _fork_ctx(self, session: ClientSession, **extra: Any) -> AgentContext:
+        base = self._ensure_ctx(session)
+        return AgentContext(
+            session_id=base.session_id,
+            client=base.client,
+            data={**base.data, **extra},
+            llm=base.llm,
+            _plugins=base._plugins,
+        )
 
     @staticmethod
     def _session_key(session: ClientSession) -> str:
-        return session.session_id or "__default__"
+        assert session.session_id is not None
+        return session.session_id
 
     def is_running(self, session: ClientSession) -> bool:
         key = self._session_key(session)
@@ -75,32 +99,28 @@ class AgentLoop:
         return t is not None and not t.done()
 
     async def on_connect(self, session: ClientSession) -> None:
-        ctx = JobContext(session_id=session.session_id, client=session)
-        await self._plugins.emit("on_connect", ctx)
+        ctx = self._ensure_ctx(session)
+        await ctx.emit("on_connect")
 
     async def on_disconnect(self, session: ClientSession) -> None:
-        ctx = JobContext(session_id=session.session_id, client=session)
-        await self._plugins.emit("on_disconnect", ctx)
+        ctx = self._ensure_ctx(session)
+        await ctx.emit("on_disconnect")
+        self._contexts.pop(self._session_key(session), None)
 
     async def on_message(
         self, msg: Any, session: ClientSession
     ) -> None:
         if isinstance(msg, ChatMessage):
-            if self.is_running(session):
-                key = self._session_key(session)
-                self._queue_messages.setdefault(key, []).append(msg.content)
-                return
-            await self._start_job(msg.content, session)
+            await self._handle_chat(msg, session)
         elif isinstance(msg, CommandMessage):
-            ctx = JobContext(
-                session_id=session.session_id,
-                client=session,
-                data=msg.data,
-            )
-            ctx.llm = self._llm
-            await self._plugins.emit(f"command:{msg.action}", ctx)
+            await self._handle_command(msg, session)
 
-    async def _start_job(self, content: str, session: ClientSession) -> None:
+    async def _handle_chat(self, msg: ChatMessage, session: ClientSession) -> None:
+        if self.is_running(session):
+            key = self._session_key(session)
+            self._queue_messages.setdefault(key, []).append(msg.content)
+            return
+
         active = sum(1 for t in self._jobs.values() if not t.done())
         if active >= self._max_concurrent:
             await session.emit(
@@ -108,25 +128,24 @@ class AgentLoop:
             )
             return
 
-        ctx = JobContext(
-            session_id=session.session_id,
-            client=session,
-            data={"content": content},
-        )
-        await self._plugins.emit("before_job", ctx)
+        ctx = self._fork_ctx(session, content=msg.content)
+        await ctx.emit("before_job")
 
         key = self._session_key(session)
         self._jobs[key] = asyncio.create_task(self._run_loop(ctx, key))
 
-    async def _run_loop(self, ctx: JobContext, session_key: str) -> None:
+    async def _handle_command(self, msg: CommandMessage, session: ClientSession) -> None:
+        ctx = self._fork_ctx(session, **msg.data)
+        await ctx.emit(f"command:{msg.action}")
+
+    async def _run_loop(self, ctx: AgentContext, session_key: str) -> None:
         try:
             for _ in range(self._max_iterations):
-                ctx.llm = self._llm
                 ctx.data["queue_messages"] = self._queue_messages.pop(session_key, None)
                 ctx.data["skills_prompt"] = self._skills.get_skills_prompt()
 
                 await ctx.client.emit(StatusEvent(status="thinking"))
-                await self._plugins.emit("before_llm", ctx)
+                await ctx.emit("before_llm")
 
                 messages = ctx.data.get("messages", [])
                 tools = self._skills.get_tools_def()
@@ -134,11 +153,9 @@ class AgentLoop:
                     messages=messages,
                     tools=tools if tools else None,
                 )
-
                 ctx.data["response"] = response
-                await self._plugins.emit("after_llm", ctx)
+                await ctx.emit("after_llm")
 
-                # Emit thinking content if present
                 if response.thinking:
                     await ctx.client.emit(StatusEvent(status="thinking", content=response.thinking))
 
@@ -185,13 +202,16 @@ class AgentLoop:
             ctx.data["reason"] = "error"
             ctx.status = "idle"
         finally:
-            await self._plugins.emit("on_complete", ctx)
+            try:
+                await ctx.emit("on_complete")
+            except Exception:
+                logger.warning("on_complete hook error", exc_info=True)
             await ctx.client.emit(StatusEvent(status=ctx.status))
             self._jobs.pop(session_key, None)
             self._queue_messages.pop(session_key, None)
 
     async def _execute_tool(
-        self, tool_call: ToolCall, ctx: JobContext
+        self, tool_call: ToolCall, ctx: AgentContext
     ) -> None:
         ctx.data["tool_call"] = tool_call
 
@@ -204,12 +224,12 @@ class AgentLoop:
         )
 
         try:
-            await self._plugins.emit("before_tool", ctx)
+            await ctx.emit("before_tool")
             tool = self._skills.get_tool(tool_call.name)
             result = await tool.execute(tool_call.arguments) if tool else f"Error: unknown tool '{tool_call.name}'"
         except Exception as e:
             ctx.data["result"] = str(e)
-            await self._plugins.emit("after_tool", ctx)
+            await ctx.emit("after_tool")
             raise
 
         await ctx.client.emit(
@@ -221,9 +241,9 @@ class AgentLoop:
         )
 
         ctx.data["result"] = result
-        await self._plugins.emit("after_tool", ctx)
+        await ctx.emit("after_tool")
 
-    async def _on_command_cancel(self, ctx: JobContext) -> None:
+    async def _on_command_cancel(self, ctx: AgentContext) -> None:
         key = self._session_key(ctx.client)
         t = self._jobs.get(key)
         if t and not t.done():

@@ -2,40 +2,40 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from agent.core.plugin import Plugin, PluginRegistry
-from agent.core.loop import JobContext
-from agent.core.config import Config
+from agent.core.loop import AgentContext
+
+if TYPE_CHECKING:
+    from agent.core.config import Config
 
 logger = logging.getLogger(__name__)
 
 
 class WorkspacePlugin(Plugin):
-    """Creates a per-session workspace directory at workspace/<session_id>/."""
 
     name = "workspace"
 
     def __init__(self) -> None:
         self._base_path = Path("./workspace")
 
-    def register(self, registry: PluginRegistry) -> None:
+    def load(self, registry: PluginRegistry, config: Config) -> None:
         registry.on("on_connect", self._on_connect)
         registry.on("before_llm", self._on_before_llm)
-
-    def init(self, config: Config) -> None:
         logger.info("WorkspacePlugin initialized, base_path=%s", self._base_path)
 
-    def shutdown(self) -> None:
+    def unload(self) -> None:
         logger.info("WorkspacePlugin shut down")
 
-    async def _on_connect(self, ctx: JobContext) -> None:
-        sid = ctx.session_id or "__default__"
+    async def _on_connect(self, ctx: AgentContext) -> None:
+        sid = ctx.session_id
         ws_dir = (self._base_path / sid).resolve()
         ws_dir.mkdir(parents=True, exist_ok=True)
         ctx.data["workspace"] = ws_dir
         logger.info("Workspace ready: %s", ws_dir)
 
-    async def _on_before_llm(self, ctx: JobContext) -> None:
+    async def _on_before_llm(self, ctx: AgentContext) -> None:
         if ctx.data.get("_ws_injected"):
             return
         ws_dir = ctx.data.get("workspace")

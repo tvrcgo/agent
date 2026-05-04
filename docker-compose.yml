@@ -12,3 +12,14 @@ services:
       - ./workspace:/app/workspace
       - ./skills:/app/skills
     restart: unless-stopped
+
+  playground:
+    image: python:3.12-alpine
+    container_name: playground
+    ports:
+      - "8767:8767"
+    volumes:
+      - ./playground:/app:ro
+    working_dir: /app
+    command: python -m http.server 8767
+    restart: unless-stopped

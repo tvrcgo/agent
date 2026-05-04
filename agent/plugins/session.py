@@ -3,11 +3,12 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any, TYPE_CHECKING
 
 from agent.core.plugin import Plugin, PluginRegistry
-from agent.core.loop import JobContext
+from agent.core.loop import AgentContext
 from agent.core.llm import Message, ToolCall
 
 if TYPE_CHECKING:
@@ -18,27 +19,25 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class _SessionState:
+    system_prompt: Message
     messages: list[Message] = field(default_factory=list)
-    system_prompt: Message | None = None
     last_prompt_tokens: int = 0
     cold_loaded: bool = False
 
 
 class SessionPlugin(Plugin):
-    """Per-session message store with JSONL persistence and auto-compression."""
-
     name = "session"
 
     def __init__(self) -> None:
         self._base_path = Path("./data/sessions")
         self._sessions: dict[str, _SessionState] = {}
-        self._default_state: _SessionState | None = None
+        self._system_prompt: Message | None = None
         self._max_load_messages: int = 100
         self._max_tokens: int = 65536
         self._compress_threshold: float = 0.9
         self._compress_keep_recent: int = 10
 
-    def register(self, registry: PluginRegistry) -> None:
+    def load(self, registry: PluginRegistry, config: Config) -> None:
         registry.on("on_connect", self._on_connect)
         registry.on("on_disconnect", self._on_disconnect)
         registry.on("before_job", self._on_before_job)
@@ -47,32 +46,32 @@ class SessionPlugin(Plugin):
         registry.on("after_tool", self._on_after_tool)
         registry.on("command:compress", self._on_compress)
 
-    def init(self, config: Config) -> None:
         self._max_load_messages = config.agent.max_load_messages
         self._max_tokens = config.agent.max_tokens
         self._compress_threshold = config.agent.compress_threshold
         self._compress_keep_recent = config.agent.compress_keep_recent
         self._base_path.mkdir(parents=True, exist_ok=True)
 
-        self._default_state = _SessionState()
         prompt_path = Path(config.agent.system_prompt_path)
         if prompt_path.exists():
-            self._default_state.system_prompt = Message(role="system", content=prompt_path.read_text(encoding="utf-8"))
+            self._system_prompt = Message(role="system", content=prompt_path.read_text(encoding="utf-8"))
+        else:
+            self._system_prompt = Message(role="system", content="You are an AI agent.")
 
         logger.info("SessionPlugin initialized, persistence_path=%s", self._base_path)
 
-    def shutdown(self) -> None:
+    def unload(self) -> None:
         self._sessions.clear()
         logger.info("SessionPlugin shut down")
 
 
-    async def _on_connect(self, ctx: JobContext) -> None:
+    async def _on_connect(self, ctx: AgentContext) -> None:
         self._get_or_load(ctx.session_id)
 
-    async def _on_disconnect(self, ctx: JobContext) -> None:
+    async def _on_disconnect(self, ctx: AgentContext) -> None:
         self._sessions.pop(ctx.session_id, None)
 
-    async def _on_before_job(self, ctx: JobContext) -> None:
+    async def _on_before_job(self, ctx: AgentContext) -> None:
         content = ctx.data.get("content", "")
         if not content:
             return
@@ -80,19 +79,8 @@ class SessionPlugin(Plugin):
         state.messages.append(Message(role="user", content=content))
         self._append(ctx.session_id, {"role": "user", "content": content})
 
-    async def _on_before_llm(self, ctx: JobContext) -> None:
+    async def _on_before_llm(self, ctx: AgentContext) -> None:
         state = self._get_or_load(ctx.session_id)
-
-        queue = ctx.data.pop("queue_messages", None)
-        if queue:
-            for content in queue:
-                state.messages.append(Message(role="user", content=content))
-                self._append(ctx.session_id, {"role": "user", "content": content})
-
-        msgs = self._get_messages(state)
-        if skills_prompt := ctx.data.get("skills_prompt"):
-            if msgs and msgs[0].role == "system":
-                msgs[0] = Message(role="system", content=msgs[0].content + "\n\n" + skills_prompt)
 
         if self._needs_compression(state):
             if state.cold_loaded:
@@ -103,11 +91,23 @@ class SessionPlugin(Plugin):
                 )
                 state.cold_loaded = False
             await self._compress(ctx, state)
-            msgs = self._get_messages(state)
+
+        queue = ctx.data.pop("queue_messages", None)
+        if queue:
+            for content in queue:
+                state.messages.append(Message(role="user", content=content))
+                self._append(ctx.session_id, {"role": "user", "content": content})
+
+        msgs = self._get_messages(state)
+        now = datetime.now().strftime("%Y-%m-%d %A %H:%M:%S")
+        msgs[0] = Message(role="system", content=msgs[0].content + f"\n\nCurrent time: {now}")
+
+        if skills_prompt := ctx.data.get("skills_prompt"):
+            msgs[0] = Message(role="system", content=msgs[0].content + "\n\n" + skills_prompt)
 
         ctx.data["messages"] = msgs
 
-    async def _on_after_llm(self, ctx: JobContext) -> None:
+    async def _on_after_llm(self, ctx: AgentContext) -> None:
         response = ctx.data.get("response")
         if response is None:
             return
@@ -122,7 +122,7 @@ class SessionPlugin(Plugin):
             state.last_prompt_tokens = response.usage.prompt_tokens
         self._append(ctx.session_id, self._response_to_dict(response))
 
-    async def _on_after_tool(self, ctx: JobContext) -> None:
+    async def _on_after_tool(self, ctx: AgentContext) -> None:
         tool_call = ctx.data.get("tool_call")
         result = ctx.data.get("result", "")
         if tool_call:
@@ -134,14 +134,13 @@ class SessionPlugin(Plugin):
                 "tool_call_id": tool_call.id,
             })
 
-    async def _on_compress(self, ctx: JobContext) -> None:
+    async def _on_compress(self, ctx: AgentContext) -> None:
         state = self._get_or_load(ctx.session_id)
         await self._compress(ctx, state)
 
 
     def _get_or_load(self, session_id: str | None) -> _SessionState:
-        if not session_id:
-            return self._default_state or _SessionState()
+        assert session_id is not None
         if session_id not in self._sessions:
             self._sessions[session_id] = self._load_session(session_id)
         return self._sessions[session_id]
@@ -149,30 +148,28 @@ class SessionPlugin(Plugin):
     def _load_session(self, session_id: str) -> _SessionState:
         path = self._session_file(session_id)
         if not path.exists():
-            return _SessionState()
+            return _SessionState(system_prompt=self._system_prompt)
         try:
             messages = []
             for line in self._tail_read(path):
                 line = line.strip()
                 if line:
                     messages.append(self._deserialize_message(json.loads(line)))
-            state = _SessionState()
+            state = _SessionState(system_prompt=self._system_prompt)
             for msg in messages:
                 if msg.role == "system":
                     state.system_prompt = msg
                 else:
                     state.messages.append(msg)
+            self._clean_orphan_tool_calls(state)
             state.cold_loaded = True
             logger.info("Session %s loaded from disk (%d messages)", session_id, len(messages))
             return state
         except Exception:
             logger.warning("Failed to load session %s, starting fresh", session_id, exc_info=True)
-        return _SessionState()
+        return _SessionState(system_prompt=self._system_prompt)
 
-
-    def _append(self, session_id: str | None, msg_dict: dict) -> None:
-        if not session_id:
-            return
+    def _append(self, session_id: str, msg_dict: dict) -> None:
         path = self._session_file(session_id)
         try:
             with open(path, "a", encoding="utf-8") as f:
@@ -214,10 +211,28 @@ class SessionPlugin(Plugin):
 
 
     @staticmethod
+    def _clean_orphan_tool_calls(state: _SessionState) -> None:
+        msgs = state.messages
+        for i in range(len(msgs) - 1, -1, -1):
+            if not msgs[i].tool_calls:
+                continue
+            expected_ids = {tc.id for tc in msgs[i].tool_calls}
+            found_ids: set[str] = set()
+            cut_idx = i + 1
+            for j in range(i + 1, len(msgs)):
+                if msgs[j].role == "tool" and msgs[j].tool_call_id:
+                    found_ids.add(msgs[j].tool_call_id)
+                    cut_idx = j + 1
+                else:
+                    break
+            if found_ids != expected_ids:
+                logger.warning("Removing %d orphaned messages at end of session (incomplete tool_calls)",
+                               cut_idx - i)
+                del msgs[i:cut_idx]
+
+    @staticmethod
     def _get_messages(state: _SessionState) -> list[Message]:
-        msgs: list[Message] = []
-        if state.system_prompt:
-            msgs.append(state.system_prompt)
+        msgs = [state.system_prompt]
         msgs.extend(state.messages)
         return msgs
 
@@ -238,7 +253,7 @@ class SessionPlugin(Plugin):
     def _needs_compression(self, state: _SessionState) -> bool:
         return self._estimate_tokens(state) >= int(self._max_tokens * self._compress_threshold)
 
-    async def _compress(self, ctx: JobContext, state: _SessionState) -> None:
+    async def _compress(self, ctx: AgentContext, state: _SessionState) -> None:
         llm = ctx.llm
         if llm is None:
             logger.warning("No llm in context, skipping compression")
@@ -249,7 +264,9 @@ class SessionPlugin(Plugin):
         if len(all_messages) <= keep_recent + 1:
             return
 
-        old = all_messages[1:-keep_recent]
+        safe_keep = self._keep_iterations(state.messages, keep_recent)
+
+        old = all_messages[1:-safe_keep]
         if not old:
             return
 
@@ -277,10 +294,10 @@ class SessionPlugin(Plugin):
 
         state.messages = [
             Message(role="user", content=f"[Previous conversation summary]\n{summary}"),
-        ] + state.messages[-keep_recent:]
+        ] + state.messages[-safe_keep:]
         state.last_prompt_tokens = 0
         logger.info("Session compressed: %d messages -> summary + %d recent",
-                     len(old), keep_recent)
+                     len(old), safe_keep)
 
 
     @staticmethod
@@ -296,6 +313,16 @@ class SessionPlugin(Plugin):
                 for tc in response.tool_calls
             ]
         return d
+
+    @staticmethod
+    def _keep_iterations(messages: list[Message], n: int) -> int:
+        count = 0
+        for i in range(len(messages) - 1, -1, -1):
+            if messages[i].role == "assistant":
+                count += 1
+                if count >= n:
+                    return len(messages) - i
+        return len(messages)
 
     @staticmethod
     def _format_for_summary(messages: list[Message]) -> str:
