@@ -10,6 +10,7 @@ from urllib.parse import parse_qs, urlparse
 
 import websockets
 from websockets.asyncio.server import Server, ServerConnection
+from websockets.exceptions import ConnectionClosed
 
 logger = logging.getLogger(__name__)
 
@@ -132,7 +133,17 @@ class ClientSession:
             pass
 
 
+class _SuppressHandshakeNoise(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        if record.exc_info:
+            if isinstance(record.exc_info[1], ConnectionClosed):
+                return False
+        return True
+
+
 class WebSocketServer:
+
+    _handshake_filter_added = False
 
     def __init__(self, host: str = "0.0.0.0", port: int = 8765) -> None:
         self._host = host
@@ -141,6 +152,9 @@ class WebSocketServer:
         self._message_handler: MessageHandler | None = None
         self._connect_handler: ConnectHandler | None = None
         self._disconnect_handler: DisconnectHandler | None = None
+        if not WebSocketServer._handshake_filter_added:
+            logging.getLogger("websockets.server").addFilter(_SuppressHandshakeNoise())
+            WebSocketServer._handshake_filter_added = True
 
     def on_message(self, handler: MessageHandler) -> None:
         self._message_handler = handler

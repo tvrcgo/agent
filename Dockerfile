@@ -7,10 +7,10 @@ WORKDIR /app
 COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-dev
 
+COPY agent/tools/*/requirements.txt /tmp/tool-reqs/
+RUN find /tmp/tool-reqs -name 'requirements.txt' -exec uv pip install -r {} \;
+
 COPY agent/ agent/
-RUN for req in agent/tools/*/requirements.txt; do \
-      [ -f "$req" ] && uv pip install -r "$req"; \
-    done
 
 COPY config.yml ./
 
