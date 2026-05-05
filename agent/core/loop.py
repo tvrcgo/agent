@@ -68,7 +68,7 @@ class AgentLoop:
         plugins: PluginRegistry,
         max_iterations: int = 100,
         max_concurrent: int = 10,
-        max_sub_job_depth: int = 3,
+        max_sub_job_depth: int = 2,
     ) -> None:
         self._llm = llm
         self._tools = tools

@@ -35,7 +35,7 @@ class WebSearchTool(Tool):
         max_results = int(arguments.get("max_results", 5))
         timeout = int(arguments.get("timeout", 15))
 
-        for backend in ("google", "brave", "yandex", "wikipedia", "mojeek"):
+        for backend in ("yandex",):
             try:
                 results = list(DDGS(timeout=timeout).text(query, max_results=max_results, backend=backend))
                 if results:

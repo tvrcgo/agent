@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from dataclasses import asdict, dataclass, field
@@ -150,11 +151,21 @@ class WebSocketServer:
     def on_disconnect(self, handler: DisconnectHandler) -> None:
         self._disconnect_handler = handler
 
+    async def _heartbeat(self, session: ClientSession) -> None:
+        try:
+            while True:
+                await asyncio.sleep(15)
+                await session.emit(StatusEvent(status="alive", content=""))
+        except Exception:
+            pass
+
     async def start(self) -> None:
         self._server = await websockets.serve(
             self._handle_connection,
             self._host,
             self._port,
+            ping_interval=None,
+            ping_timeout=None,
         )
         logger.info(f"WebSocket server listening on ws://{self._host}:{self._port}")
 
@@ -183,6 +194,8 @@ class WebSocketServer:
             except Exception:
                 logger.warning("Connect handler error", exc_info=True)
 
+        heartbeat_task = asyncio.create_task(self._heartbeat(session))
+
         try:
             async for raw in ws:
                 try:
@@ -194,6 +207,7 @@ class WebSocketServer:
         except websockets.ConnectionClosed:
             pass
         finally:
+            heartbeat_task.cancel()
             logger.info(f"Client disconnected: {ws.remote_address}, session_id={session.session_id}")
             if self._disconnect_handler:
                 try:

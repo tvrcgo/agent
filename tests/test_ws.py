@@ -1,10 +1,16 @@
 """WebSocket protocol integration tests."""
 import asyncio
 import json
+import os
 import uuid
 import websockets
 
-WS_URL = "ws://127.0.0.1:8765"
+WS_URL = os.environ.get("WS_URL", "ws://127.0.0.1:8765")
+
+
+def _connect(url, **kwargs):
+    """Connect with client-side keepalive disabled — Docker proxy drops native ping/pong."""
+    return websockets.connect(url, ping_interval=None, ping_timeout=None, open_timeout=30, **kwargs)
 
 
 def _chat(content: str) -> str:
@@ -33,7 +39,7 @@ async def _collect(ws, timeout=60):
 async def test_status_structure():
     """StatusEvent uses 'status' field (not 'state')."""
     print("=== Scenario 1: StatusEvent Structure ===")
-    async with websockets.connect(f"{WS_URL}?session_id=test-status-{uuid.uuid4().hex[:6]}") as ws:
+    async with _connect(f"{WS_URL}?session_id=test-status-{uuid.uuid4().hex[:6]}") as ws:
         await ws.send(_chat("hello"))
         msgs = await _collect(ws, timeout=30)
 
@@ -54,7 +60,7 @@ async def test_session_persistence():
     import subprocess
     sid = f"test-{uuid.uuid4().hex[:8]}"
     url = f"{WS_URL}?session_id={sid}"
-    async with websockets.connect(url) as ws:
+    async with _connect(url) as ws:
         await ws.send(_chat("hello, my name is TestBot"))
         await asyncio.sleep(3)
 
@@ -78,7 +84,7 @@ async def test_multi_session():
 
     async def run(name):
         url = f"{WS_URL}?session_id={name}"
-        async with websockets.connect(url) as ws:
+        async with _connect(url) as ws:
             await ws.send(_chat(f"hello from {name}"))
             return await _collect(ws, timeout=30)
 
@@ -96,7 +102,7 @@ async def test_multi_session():
 async def test_error_handling():
     """Invalid JSON gets parse_error event."""
     print("\n=== Scenario 4: Error Handling ===")
-    async with websockets.connect(f"{WS_URL}?session_id=test-err-{uuid.uuid4().hex[:6]}") as ws:
+    async with _connect(f"{WS_URL}?session_id=test-err-{uuid.uuid4().hex[:6]}") as ws:
         await ws.send("not json at all")
         try:
             raw = await asyncio.wait_for(ws.recv(), timeout=10)
@@ -113,7 +119,7 @@ async def test_error_handling():
 async def test_cancel():
     """Cancel command stops a running job."""
     print("\n=== Scenario 5: Cancel ===")
-    async with websockets.connect(f"{WS_URL}?session_id=test-cancel-{uuid.uuid4().hex[:6]}") as ws:
+    async with _connect(f"{WS_URL}?session_id=test-cancel-{uuid.uuid4().hex[:6]}") as ws:
         await ws.send(_chat("search the web for latest AI news"))
         await asyncio.sleep(2)
         await ws.send(_command("cancel"))
@@ -131,7 +137,7 @@ async def test_cancel():
 async def test_tool_call_protocol():
     """ToolCallEvent/ToolResultEvent have correct shape."""
     print("\n=== Scenario 6: Tool Call Protocol ===")
-    async with websockets.connect(f"{WS_URL}?session_id=test-tool-{uuid.uuid4().hex[:6]}", ping_timeout=60) as ws:
+    async with _connect(f"{WS_URL}?session_id=test-tool-{uuid.uuid4().hex[:6]}") as ws:
         await ws.send(_chat("use web_search to search for Python asyncio"))
         msgs = await _collect(ws, timeout=90)
 
@@ -165,7 +171,7 @@ async def test_tool_call_protocol():
 async def test_command_routing():
     """CommandMessage routes to command:<action> hook."""
     print("\n=== Scenario 7: Command Routing ===")
-    async with websockets.connect(f"{WS_URL}?session_id=test-cmd-{uuid.uuid4().hex[:6]}") as ws:
+    async with _connect(f"{WS_URL}?session_id=test-cmd-{uuid.uuid4().hex[:6]}") as ws:
         await ws.send(_command("compress"))
         await asyncio.sleep(1)
         # Command should not crash; no error = pass
@@ -180,7 +186,7 @@ async def test_disconnect_mid_job():
     print("\n=== Scenario 8: Disconnect Mid-Job ===")
     sid = f"abort-{uuid.uuid4().hex[:6]}"
     try:
-        async with websockets.connect(f"{WS_URL}?session_id={sid}") as ws:
+        async with _connect(f"{WS_URL}?session_id={sid}") as ws:
             await ws.send(_chat("count from 1 to 100, say each number"))
             await asyncio.sleep(1)
             await ws.close(1011, "test abort")
@@ -190,9 +196,9 @@ async def test_disconnect_mid_job():
 
     await asyncio.sleep(2)
     # Server should still accept new connections, use different session to avoid queuing
-    async with websockets.connect(f"{WS_URL}?session_id=test-reconnect-{uuid.uuid4().hex[:6]}") as ws:
+    async with _connect(f"{WS_URL}?session_id=test-reconnect-{uuid.uuid4().hex[:6]}") as ws:
         await ws.send(_chat("hello after abort"))
-        msgs = await _collect(ws, timeout=30)
+        msgs = await _collect(ws, timeout=60)
         messages = [m for m in msgs if m["type"] == "message"]
         passed = len(messages) > 0
         print(f"  messages after reconnect: {len(messages)}")
@@ -206,7 +212,7 @@ async def test_rapid_disconnect():
     for i in range(3):
         sid = f"rapid-{uuid.uuid4().hex[:6]}"
         try:
-            async with websockets.connect(f"{WS_URL}?session_id={sid}") as ws:
+            async with _connect(f"{WS_URL}?session_id={sid}") as ws:
                 await ws.send(_chat(f"msg-{i}"))
                 await asyncio.sleep(0.3)
                 await ws.close()
@@ -216,7 +222,7 @@ async def test_rapid_disconnect():
 
     await asyncio.sleep(2)
     # Server should still be alive
-    async with websockets.connect(f"{WS_URL}?session_id=test-final-{uuid.uuid4().hex[:6]}") as ws:
+    async with _connect(f"{WS_URL}?session_id=test-final-{uuid.uuid4().hex[:6]}") as ws:
         await ws.send(_chat("final ping"))
         msgs = await _collect(ws, timeout=60)
         passed = len(msgs) > 0
@@ -228,9 +234,9 @@ async def test_rapid_disconnect():
 async def test_job_tree_event():
     """JobTreeEvent broadcast during sub-job execution."""
     print("\n=== Scenario 10: Job Tree Event ===")
-    async with websockets.connect(f"{WS_URL}?session_id=test-jobtree-{uuid.uuid4().hex[:6]}", ping_timeout=90) as ws:
+    async with _connect(f"{WS_URL}?session_id=test-jobtree-{uuid.uuid4().hex[:6]}") as ws:
         await ws.send(_chat("use sub_job to search: Python, Go"))
-        msgs = await _collect(ws, timeout=120)
+        msgs = await _collect(ws, timeout=240)
 
         tree_events = [m for m in msgs if m["type"] == "job_tree"]
         print(f"  job_tree events: {len(tree_events)}")
@@ -240,6 +246,50 @@ async def test_job_tree_event():
                 print(f"    {j['id']} depth={j['depth']} status={j['status']}")
                 assert all(k in j for k in ("id", "parent_id", "depth", "status", "content")), f"missing fields in job: {j}"
         passed = len(tree_events) > 0
+        print("  PASS" if passed else "  FAIL")
+        return passed
+
+
+async def test_long_running_subjob():
+    """Sub-job with multiple web searches does not cause disconnect."""
+    print("\n=== Scenario 11: Long-running Sub-job ===")
+    async with _connect(f"{WS_URL}?session_id=test-longsub-{uuid.uuid4().hex[:6]}") as ws:
+        await ws.send(_chat("use sub_job to search: Python asyncio, Go goroutines, Rust tokio, JavaScript event loop"))
+        msgs = await _collect(ws, timeout=600)
+
+        tree_events = [m for m in msgs if m["type"] == "job_tree"]
+        messages = [m for m in msgs if m["type"] == "message"]
+        errors = [m for m in msgs if m["type"] == "error"]
+
+        print(f"  job_tree events: {len(tree_events)}")
+        print(f"  messages: {len(messages)}")
+        print(f"  errors: {len(errors)}")
+
+        if not tree_events:
+            print("  FAIL - no job_tree events")
+            return False
+
+        # Check tree evolved over time (multiple snapshots)
+        # (sub-jobs may complete and be removed before the final broadcast,
+        #  so collect statuses and depths across ALL events, not just the last)
+        statuses: set[str] = set()
+        depths: set[int] = set()
+        for ev in tree_events:
+            for j in ev["payload"]["jobs"]:
+                statuses.add(j["status"])
+                depths.add(j["depth"])
+        print(f"  seen statuses: {statuses}")
+        print(f"  seen depths: {depths}")
+
+        passed = (
+            len(errors) == 0
+            and len(tree_events) >= 3
+            and "thinking" in statuses
+            and "acting" in statuses
+            and "done" in statuses
+            and 0 in depths
+            and 1 in depths
+        )
         print("  PASS" if passed else "  FAIL")
         return passed
 
@@ -257,6 +307,7 @@ async def main():
         ("disconnect_mid_job", test_disconnect_mid_job),
         ("rapid_disconnect", test_rapid_disconnect),
         ("job_tree_event", test_job_tree_event),
+        ("long_running_subjob", test_long_running_subjob),
     ]
 
     for name, fn in scenarios:

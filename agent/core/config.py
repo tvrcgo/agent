@@ -24,7 +24,7 @@ class AgentConfig(BaseModel):
     compress_threshold: float = 0.9
     compress_keep_recent: int = 10
     max_concurrent_sessions: int = 10
-    max_sub_job_depth: int = 3
+    max_sub_job_depth: int = 2
 
 
 class WSConfig(BaseModel):

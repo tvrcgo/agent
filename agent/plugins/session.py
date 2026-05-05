@@ -178,7 +178,7 @@ class SessionPlugin(Plugin):
             logger.warning("Failed to append to session file %s", session_id, exc_info=True)
 
     def _session_file(self, session_id: str) -> Path:
-        return self._base_path / f"{session_id}.jsonl"
+        return self._base_path / f"{session_id.replace('/', '---')}.jsonl"
 
     def _tail_read(self, path: Path) -> list[str]:
         try:

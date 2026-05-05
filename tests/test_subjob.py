@@ -5,14 +5,14 @@ import asyncio
 async def test_empty_tasks():
     from agent.tools.subjob import SubJobTool
     tool = SubJobTool()
-    result = await tool.execute({"tasks": []})
-    assert "no tasks" in result, f"unexpected: {result}"
+    result = await tool.execute({"jobs": []})
+    assert "no jobs" in result, f"unexpected: {result}"
 
 
 async def test_no_loop():
     from agent.tools.subjob import SubJobTool
     tool = SubJobTool()
-    result = await tool.execute({"tasks": [{"description": "test"}]}, ctx=None)
+    result = await tool.execute({"jobs": [{"content": "test"}]}, ctx=None)
     assert "unavailable" in result, f"unexpected: {result}"
 
 
@@ -20,24 +20,40 @@ async def test_result_aggregation():
     from agent.tools.subjob import SubJobTool
 
     class MockLoop:
-        async def spawn(self, desc, ctx):
-            return f"Result for: {desc}"
+        async def spawn(self, content, ctx):
+            return f"Result for: {content}"
 
     class MockCtx:
         _loop = MockLoop()
 
     tool = SubJobTool()
-    tasks = [
-        {"description": "task-a"},
-        {"description": "task-b"},
-        {"description": "task-c"},
+    jobs = [
+        {"content": "job-a"},
+        {"content": "job-b"},
+        {"content": "job-c"},
     ]
-    result = await tool.execute({"tasks": tasks}, ctx=MockCtx())
-    assert "## Sub-task 1" in result
-    assert "Result for: task-a" in result
-    assert "Result for: task-b" in result
-    assert "Result for: task-c" in result
+    result = await tool.execute({"jobs": jobs}, ctx=MockCtx())
+    assert "## Sub-job 1" in result
+    assert "Result for: job-a" in result
+    assert "Result for: job-b" in result
+    assert "Result for: job-c" in result
     assert "---" in result
+
+
+async def test_too_many_jobs():
+    from agent.tools.subjob import SubJobTool
+
+    class MockLoop:
+        async def spawn(self, content, ctx):
+            return f"Result for: {content}"
+
+    class MockCtx:
+        _loop = MockLoop()
+
+    tool = SubJobTool()
+    jobs = [{"content": f"job-{i}"} for i in range(6)]
+    result = await tool.execute({"jobs": jobs}, ctx=MockCtx())
+    assert "at most 5" in result, f"unexpected: {result}"
 
 
 async def main():
@@ -46,6 +62,7 @@ async def main():
         ("empty_tasks", test_empty_tasks),
         ("no_loop", test_no_loop),
         ("result_aggregation", test_result_aggregation),
+        ("too_many_jobs", test_too_many_jobs),
     ]
 
     for name, fn in scenarios:
