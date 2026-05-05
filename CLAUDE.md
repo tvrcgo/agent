@@ -7,7 +7,8 @@
 - **入口** (`__main__.py`)：组装各组件并启动 WebSocket 服务
 - **推理循环** (`loop.py`)：Think→Act→Observe 循环，每个 WebSocket 会话一个 asyncio Task。loop.py 只做核心调度，功能扩展通过插件钩子实现，禁止在其中添加业务逻辑
 - **插件** (`plugin.py`)：基于钩子的事件系统，插件在 `load` 时注册 handler，`emit` 按注册顺序同步调用；`command:<action>` 命名钩子处理 UI 操作
-- **技能** (`skill.py`)：每个 Skill 提供一组工具定义，LLM 返回 tool_call 时由对应 Skill 执行
+- **工具** (`tool.py`)：可执行工具的抽象基类和注册表，从 `agent/tools/` 加载 Tool 子类，传入 AgentLoop 供 LLM 调用
+- **技能** (`skill.py`)：SKILL.md 指令模板，从 `agent/skills/` 和 `skills/` 两个目录加载，注入系统提示词
 - **传输** (`ws.py`)：类型化 WebSocket 消息协议，StatusEvent 统一承载状态和思维内容
 
 ## 核心概念
@@ -22,10 +23,10 @@ job 运行中收到的 chat 消息排队，下轮迭代开始前由 loop 写入 
 存储无上限，冷启只加载尾部若干条。token 超阈值时通过独立 LLM 调用压缩旧消息，保留最近原文。压缩在内存完成，JSONL 保留完整历史。
 
 ### Job 树
-复杂任务可通过 `sub_job` 工具并行执行。`loop.spawn()` 创建子 Job：子 Job 通过 `ClientSession.is_silent` 抑制个体事件，通过 `JobTreeEvent` 广播树结构（id、parent_id、depth、status、content）给客户端。所有 Job 共享同一 AgentLoop 的 LLM 和 skills，通过 `asyncio.gather` 并发执行。`max_sub_job_depth` 限制递归深度。
+复杂任务可通过 `sub_job` 工具并行执行。`loop.spawn()` 创建子 Job：子 Job 通过 `ClientSession.is_silent` 抑制个体事件，通过 `JobTreeEvent` 广播树结构（id、parent_id、depth、status、content）给客户端。所有 Job 共享同一 AgentLoop 的 LLM、tools 和 skills，通过 `asyncio.gather` 并发执行。`max_sub_job_depth` 限制递归深度。
 
 ### 插件生命周期
-`on_connect` → `before_job` → `before_llm` → `after_llm` → `before_tool` → 技能执行 → `after_tool` → 循环 → `on_complete` / `on_disconnect`。`command:cancel` 由 loop 自身处理（核心行为）。JobAborted 异常中断 job。
+`on_connect` → `before_job` → `before_llm` → `after_llm` → `before_tool` → 工具执行 → `after_tool` → 循环 → `on_complete` / `on_disconnect`。`command:cancel` 由 loop 自身处理（核心行为）。JobAborted 异常中断 job。
 
 ## 约定
 
@@ -37,7 +38,7 @@ job 运行中收到的 chat 消息排队，下轮迭代开始前由 loop 写入 
 ### 架构规范
 
 - 按架构分层，模块只能向上或同级引用，不能 core 中的模块引用 plugins, skills 中的模块
-- agent/skills 中 skill 的依赖要和项目依赖隔离
+- agent/tools 中 tool 的依赖要和项目依赖隔离
 - 对 loop 功能的扩展，都用 hook+plugin 的方式实现；如果 hook 不够可新增，但 hook—name 要符合 loop 流程的语义，可复用
 
 ### 流程要求
@@ -61,7 +62,7 @@ job 运行中收到的 chat 消息排队，下轮迭代开始前由 loop 写入 
 - 一个方法可能出现的异常，要在方法内部去处理好，不要在外层调用方去做多种异常捕获和处理
 - 不能为了方便，绕过复杂问题，用打补丁或兜底的方式处理
 - 不写 docstring，除非行为出人意料；注释要简洁清晰，只在必要的地方添加
-- 不搞提前抽象，不搞多余的中间层；逻辑清晰的前提下保持精简
+- 不要提前抽象，不要多余的中间层；逻辑清晰的前提下保持精简
 - 不需要的代码和死代码及时清除干净
 - README 只包含：项目概述、主要特性、部署方式、配置说明，技术细节不展开
 

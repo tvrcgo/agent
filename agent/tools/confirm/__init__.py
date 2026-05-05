@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from agent.core.skill import Tool
+from agent.core.tool import Tool
 
 
 class RequestConfirmationTool(Tool):

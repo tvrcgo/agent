@@ -4,7 +4,7 @@ import asyncio
 import logging
 from typing import Any
 
-from agent.core.skill import Tool
+from agent.core.tool import Tool
 
 logger = logging.getLogger(__name__)
 

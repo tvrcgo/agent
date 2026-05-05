@@ -4,7 +4,7 @@ import logging
 
 from ddgs import DDGS
 
-from agent.core.skill import Tool
+from agent.core.tool import Tool
 
 logger = logging.getLogger(__name__)
 

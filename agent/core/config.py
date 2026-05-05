@@ -36,7 +36,7 @@ class Config(BaseModel):
     model: ModelConfig = ModelConfig()
     agent: AgentConfig = AgentConfig()
     ws: WSConfig = WSConfig()
-    skills: list[str] = []
+    tools: list[str] = []
     plugins: list[str] = []
 
 

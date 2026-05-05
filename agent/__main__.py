@@ -7,6 +7,7 @@ from agent.core.config import load_config
 from agent.core.loop import AgentLoop
 from agent.core.plugin import PluginRegistry
 from agent.core.skill import SkillRegistry
+from agent.core.tool import ToolRegistry
 from agent.core.ws import WebSocketServer
 from agent.core.llm import OpenAIProvider
 
@@ -27,10 +28,12 @@ async def main() -> None:
         model=config.model.name,
     )
 
+    tools = ToolRegistry()
+    if config.tools:
+        tools.load_modules(config.tools)
+
     skills = SkillRegistry()
-    if config.skills:
-        skills.load_modules(config.skills)
-    skills.load_skills()
+    skills.load_skills("agent/skills", "skills")
 
     plugins = PluginRegistry()
     if config.plugins:
@@ -38,6 +41,7 @@ async def main() -> None:
 
     loop = AgentLoop(
         llm=llm,
+        tools=tools,
         skills=skills,
         plugins=plugins,
         max_iterations=config.agent.max_iterations,

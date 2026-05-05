@@ -9,6 +9,7 @@ import websockets.exceptions
 
 from agent.core.plugin import PluginRegistry
 from agent.core.skill import SkillRegistry
+from agent.core.tool import ToolRegistry
 from agent.core.ws import (
     ChatMessage,
     ClientSession,
@@ -62,6 +63,7 @@ class AgentLoop:
     def __init__(
         self,
         llm: OpenAIProvider,
+        tools: ToolRegistry,
         skills: SkillRegistry,
         plugins: PluginRegistry,
         max_iterations: int = 100,
@@ -69,6 +71,7 @@ class AgentLoop:
         max_sub_job_depth: int = 3,
     ) -> None:
         self._llm = llm
+        self._tools = tools
         self._skills = skills
         self._plugins = plugins
         self._max_iterations = max_iterations
@@ -166,7 +169,7 @@ class AgentLoop:
                 await ctx.emit("before_llm")
 
                 messages = ctx.data.get("messages", [])
-                tools = self._skills.get_tools_def()
+                tools = self._tools.get_defs()
                 response: LLMResponse = await self._llm.chat(
                     messages=messages,
                     tools=tools if tools else None,
@@ -258,7 +261,7 @@ class AgentLoop:
 
         try:
             await ctx.emit("before_tool")
-            tool = self._skills.get_tool(tool_call.name)
+            tool = self._tools.get(tool_call.name)
             result = await tool.execute(tool_call.arguments, ctx=ctx) if tool else f"Error: unknown tool '{tool_call.name}'"
         except Exception as e:
             ctx.data["result"] = str(e)

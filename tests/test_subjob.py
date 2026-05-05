@@ -3,21 +3,21 @@ import asyncio
 
 
 async def test_empty_tasks():
-    from agent.skills.subjob import SubJobTool
+    from agent.tools.subjob import SubJobTool
     tool = SubJobTool()
     result = await tool.execute({"tasks": []})
     assert "no tasks" in result, f"unexpected: {result}"
 
 
 async def test_no_loop():
-    from agent.skills.subjob import SubJobTool
+    from agent.tools.subjob import SubJobTool
     tool = SubJobTool()
     result = await tool.execute({"tasks": [{"description": "test"}]}, ctx=None)
     assert "unavailable" in result, f"unexpected: {result}"
 
 
 async def test_result_aggregation():
-    from agent.skills.subjob import SubJobTool
+    from agent.tools.subjob import SubJobTool
 
     class MockLoop:
         async def spawn(self, desc, ctx):
