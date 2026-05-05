@@ -19,8 +19,10 @@ ws:
 skills:
   - websearch
   - confirm
+  - subjob
 
 plugins:
   - session
   - confirm
   - workspace
+  - subjob

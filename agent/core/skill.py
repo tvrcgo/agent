@@ -55,7 +55,7 @@ class Tool(ABC):
         }
 
     @abstractmethod
-    async def execute(self, arguments: dict[str, Any]) -> str:
+    async def execute(self, arguments: dict[str, Any], ctx: Any = None) -> str:
         ...
 
 

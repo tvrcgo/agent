@@ -356,6 +356,66 @@
     font-size: 14px;
     color: var(--muted);
   }
+
+  /* ---- job tree ---- */
+  .main { position: relative; }
+  .job-tree {
+    position: absolute;
+    top: 41px;
+    right: 8px;
+    background: rgba(255,255,255,0.95);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    min-width: 210px;
+    max-width: 300px;
+    max-height: 360px;
+    overflow-y: auto;
+    z-index: 10;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+    font-size: 11px;
+    scrollbar-width: thin;
+    scrollbar-color: var(--border) transparent;
+  }
+  .job-tree-header {
+    padding: 6px 10px;
+    font-weight: 600;
+    color: var(--muted);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    position: sticky;
+    top: 0;
+    background: rgba(255,255,255,0.95);
+  }
+  .job-tree-header .job-count {
+    font-weight: 400;
+    color: var(--accent);
+  }
+  .job-tree-node {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    white-space: nowrap;
+  }
+  .job-tree-node .dot {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .dot.status-pending { background: #94a3b8; }
+  .dot.status-thinking { background: #7c3aed; }
+  .dot.status-acting { background: #2563eb; }
+  .dot.status-done { background: #059669; }
+  .dot.status-error { background: #dc2626; }
+  .dot.status-cancelled { background: #f59e0b; }
+  .dot.status-running { background: #2563eb; }
+  .job-tree-node .desc {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: var(--text);
+  }
 </style>
 </head>
 <body>
@@ -378,6 +438,10 @@
       <span class="status-dot disconnected" id="status-dot"></span>
       <span class="current-title" id="current-title"></span>
       <button class="delete-btn" id="delete-btn" title="Delete session" style="display:none">Delete</button>
+    </div>
+    <div class="job-tree" id="job-tree" style="display:none">
+      <div class="job-tree-header">Jobs <span class="job-count"></span></div>
+      <div class="job-tree-list" id="job-tree-list"></div>
     </div>
     <div class="message-area" id="message-area">
       <div class="empty-state">
@@ -554,6 +618,9 @@ const $sendBtn = document.getElementById('send-btn');
 const $newSessionBtn = document.getElementById('new-session-btn');
 const $deleteBtn = document.getElementById('delete-btn');
 let $statusBar = document.getElementById('status-bar');
+const $jobTree = document.getElementById('job-tree');
+const $jobTreeList = document.getElementById('job-tree-list');
+const $jobCount = $jobTree.querySelector('.job-count');
 
 function renderSidebar() {
   const sessions = listSessions();
@@ -572,6 +639,31 @@ function renderSidebar() {
     el.innerHTML = `<div class="title">${escapeHtml(s.title)}</div><div class="time">${time}</div>`;
     el.addEventListener('click', () => selectSession(s.id));
     $sessionList.appendChild(el);
+  }
+}
+
+function renderJobTree(sessionId) {
+  const jobs = _jobTrees.get(sessionId) || [];
+  if (jobs.length === 0) {
+    $jobTree.style.display = 'none';
+    return;
+  }
+  const allDone = jobs.every(j => j.status === 'done' || j.status === 'error' || j.status === 'cancelled');
+  if (allDone) {
+    $jobTree.style.display = 'none';
+    return;
+  }
+
+  $jobTree.style.display = '';
+  $jobCount.textContent = jobs.length;
+
+  $jobTreeList.innerHTML = '';
+  for (const j of jobs) {
+    const el = document.createElement('div');
+    el.className = 'job-tree-node';
+    el.style.paddingLeft = (8 + j.depth * 14) + 'px';
+    el.innerHTML = `<span class="dot status-${j.status}"></span><span class="desc">${escapeHtml(j.content.slice(0, 30))}</span>`;
+    $jobTreeList.appendChild(el);
   }
 }
 
@@ -703,6 +795,7 @@ function selectSession(sessionId) {
 
   renderSidebar();
   renderMessages(sessionId);
+  renderJobTree(sessionId);
 
   // Ensure connection for this session
   ensureConnection(sessionId);
@@ -733,6 +826,7 @@ async function createNewSession() {
 
 const _connections = new Map();           // sessionId -> WebSocket
 const _sessionStates = new Map();         // sessionId -> { status: string }
+const _jobTrees = new Map();              // sessionId -> jobs[]
 
 function ensureConnection(sessionId) {
   if (_connections.has(sessionId)) return;
@@ -818,6 +912,10 @@ function ensureConnection(sessionId) {
           await appendMessage(sessionId, 'thinking', p.content, {});
           if (isCurrent) renderMessage('thinking', p.content, {});
         }
+        break;
+      case 'job_tree':
+        _jobTrees.set(sessionId, p.jobs || []);
+        if (isCurrent) renderJobTree(sessionId);
         break;
     }
 

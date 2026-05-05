@@ -51,12 +51,19 @@ class ErrorEvent:
     type: str = "error"
 
 
+@dataclass
+class JobTreeEvent:
+    jobs: list[dict]  # [{id, parent_id, depth, status, content, result}]
+    type: str = "job_tree"
+
+
 AgentEvent = (
     MessageEvent
     | ToolCallEvent
     | ToolResultEvent
     | StatusEvent
     | ErrorEvent
+    | JobTreeEvent
 )
 
 
@@ -113,8 +120,11 @@ class ClientSession:
     def __init__(self, ws: ServerConnection) -> None:
         self._ws = ws
         self.session_id: str | None = None
+        self.is_silent: bool = False
 
     async def emit(self, event: AgentEvent) -> None:
+        if self.is_silent:
+            return
         try:
             await self._ws.send(_serialize_event(event))
         except websockets.exceptions.ConnectionClosed:

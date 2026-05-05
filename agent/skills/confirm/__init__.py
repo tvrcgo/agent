@@ -21,5 +21,5 @@ class RequestConfirmationTool(Tool):
         "required": ["description"],
     }
 
-    async def execute(self, arguments: dict) -> str:
+    async def execute(self, arguments: dict, ctx=None) -> str:
         return "User approved the operation."

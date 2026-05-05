@@ -30,7 +30,7 @@ class WebSearchTool(Tool):
         "required": ["query"],
     }
 
-    async def execute(self, arguments: dict) -> str:
+    async def execute(self, arguments: dict, ctx=None) -> str:
         query = arguments.get("query", "")
         max_results = int(arguments.get("max_results", 5))
         timeout = int(arguments.get("timeout", 15))

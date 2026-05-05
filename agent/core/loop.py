@@ -32,18 +32,29 @@ class JobAborted(Exception):
 
 
 @dataclass
+class Job:
+    id: str
+    parent_id: str | None
+    depth: int
+    status: str  # pending | thinking | acting | waiting | done | error | cancelled
+    content: str
+    result: str | None = None
+    _task: asyncio.Task[None] | None = field(default=None, repr=False)
+    _ctx: "AgentContext | None" = field(default=None, repr=False)
+
+
+@dataclass
 class AgentContext:
 
     session_id: str | None
     client: ClientSession
     data: dict[str, Any] = field(default_factory=dict)
     llm: OpenAIProvider | None = None
-    status: str = "idle"
-    _plugins: PluginRegistry | None = field(default=None, repr=False)
+    _loop: "AgentLoop | None" = field(default=None, repr=False)
 
     async def emit(self, hook_name: str) -> None:
-        if self._plugins is not None:
-            await self._plugins.emit(hook_name, self)
+        if self._loop is not None:
+            await self._loop._plugins.emit(hook_name, self)
 
 
 class AgentLoop:
@@ -55,28 +66,31 @@ class AgentLoop:
         plugins: PluginRegistry,
         max_iterations: int = 100,
         max_concurrent: int = 10,
+        max_sub_job_depth: int = 3,
     ) -> None:
         self._llm = llm
         self._skills = skills
         self._plugins = plugins
         self._max_iterations = max_iterations
         self._max_concurrent = max_concurrent
-        self._jobs: dict[str, asyncio.Task[None]] = {}
+        self._max_sub_job_depth = max_sub_job_depth
+        self._jobs: dict[str, Job] = {}
         self._queue_messages: dict[str, list[str]] = {}
         self._contexts: dict[str, AgentContext] = {}
 
         self._plugins.on("command:cancel", self._on_command_cancel)
 
     def _ensure_ctx(self, session: ClientSession) -> AgentContext:
-        key = self._session_key(session)
-        if key not in self._contexts:
-            self._contexts[key] = AgentContext(
-                session_id=session.session_id,
+        sid = session.session_id
+        assert sid is not None
+        if sid not in self._contexts:
+            self._contexts[sid] = AgentContext(
+                session_id=sid,
                 client=session,
                 llm=self._llm,
-                _plugins=self._plugins,
+                _loop=self,
             )
-        return self._contexts[key]
+        return self._contexts[sid]
 
     def _fork_ctx(self, session: ClientSession, **extra: Any) -> AgentContext:
         base = self._ensure_ctx(session)
@@ -85,18 +99,14 @@ class AgentLoop:
             client=base.client,
             data={**base.data, **extra},
             llm=base.llm,
-            _plugins=base._plugins,
+            _loop=base._loop,
         )
 
-    @staticmethod
-    def _session_key(session: ClientSession) -> str:
-        assert session.session_id is not None
-        return session.session_id
-
     def is_running(self, session: ClientSession) -> bool:
-        key = self._session_key(session)
-        t = self._jobs.get(key)
-        return t is not None and not t.done()
+        sid = session.session_id
+        assert sid is not None
+        job = self._jobs.get(sid)
+        return job is not None and job._task is not None and not job._task.done()
 
     async def on_connect(self, session: ClientSession) -> None:
         ctx = self._ensure_ctx(session)
@@ -105,7 +115,7 @@ class AgentLoop:
     async def on_disconnect(self, session: ClientSession) -> None:
         ctx = self._ensure_ctx(session)
         await ctx.emit("on_disconnect")
-        self._contexts.pop(self._session_key(session), None)
+        self._contexts.pop(session.session_id, None)
 
     async def on_message(
         self, msg: Any, session: ClientSession
@@ -116,12 +126,15 @@ class AgentLoop:
             await self._handle_command(msg, session)
 
     async def _handle_chat(self, msg: ChatMessage, session: ClientSession) -> None:
+        sid = session.session_id
+        assert sid is not None
+
         if self.is_running(session):
-            key = self._session_key(session)
-            self._queue_messages.setdefault(key, []).append(msg.content)
+            self._queue_messages.setdefault(sid, []).append(msg.content)
             return
 
-        active = sum(1 for t in self._jobs.values() if not t.done())
+        active = sum(1 for j in self._jobs.values()
+                     if j.depth == 0 and j._task is not None and not j._task.done())
         if active >= self._max_concurrent:
             await session.emit(
                 ErrorEvent(code="busy", message=f"Too many concurrent sessions (max {self._max_concurrent})")
@@ -129,21 +142,26 @@ class AgentLoop:
             return
 
         ctx = self._fork_ctx(session, content=msg.content)
+        job = Job(
+            id=sid, parent_id=None, depth=0,
+            status="pending", content=msg.content, _ctx=ctx,
+        )
+        self._jobs[sid] = job
         await ctx.emit("before_job")
-
-        key = self._session_key(session)
-        self._jobs[key] = asyncio.create_task(self._run_loop(ctx, key))
+        job._task = asyncio.create_task(self._run_loop(job))
 
     async def _handle_command(self, msg: CommandMessage, session: ClientSession) -> None:
         ctx = self._fork_ctx(session, **msg.data)
         await ctx.emit(f"command:{msg.action}")
 
-    async def _run_loop(self, ctx: AgentContext, session_key: str) -> None:
+    async def _run_loop(self, job: Job) -> str:
+        ctx = job._ctx
         try:
             for _ in range(self._max_iterations):
-                ctx.data["queue_messages"] = self._queue_messages.pop(session_key, None)
+                ctx.data["queue_messages"] = self._queue_messages.pop(job.id, None)
                 ctx.data["skills_prompt"] = self._skills.get_skills_prompt()
 
+                job.status = "thinking"
                 await ctx.client.emit(StatusEvent(status="thinking"))
                 await ctx.emit("before_llm")
 
@@ -160,10 +178,13 @@ class AgentLoop:
                     await ctx.client.emit(StatusEvent(status="thinking", content=response.thinking))
 
                 if response.tool_calls:
+                    job.status = "acting"
                     await ctx.client.emit(StatusEvent(status="acting"))
 
+                    await ctx.emit("before_tools")
                     for tool_call in response.tool_calls:
                         await self._execute_tool(tool_call, ctx)
+                    await ctx.emit("after_tools")
 
                     continue
 
@@ -171,44 +192,56 @@ class AgentLoop:
                     await ctx.client.emit(MessageEvent(content=response.text))
 
                 ctx.data["reason"] = "done"
-                ctx.status = "done"
-                break
+                job.status = "done"
+                job.result = response.text
+                return response.text or ""
             else:
-                await ctx.client.emit(
-                    ErrorEvent(
-                        code="max_iterations",
-                        message=f"Reached maximum iterations ({self._max_iterations})",
-                    )
-                )
+                msg = f"Reached maximum iterations ({self._max_iterations})"
+                await ctx.client.emit(ErrorEvent(code="max_iterations", message=msg))
                 ctx.data["reason"] = "error"
-                ctx.status = "done"
+                job.status = "error"
+                job.result = msg
+                return msg
 
         except asyncio.CancelledError:
-            logger.info("Job cancelled, session=%s", session_key)
+            logger.info("Job cancelled, session=%s", job.id)
             ctx.data["reason"] = "cancelled"
-            ctx.status = "idle"
+            job.status = "cancelled"
+            return ""
         except JobAborted as e:
-            logger.info("Job aborted, session=%s: %s", session_key, e.message)
+            logger.info("Job aborted, session=%s: %s", job.id, e.message)
             await ctx.client.emit(MessageEvent(content=e.message))
             ctx.data["reason"] = "aborted"
-            ctx.status = "done"
+            job.status = "done"
+            job.result = e.message
+            return ""
         except websockets.exceptions.ConnectionClosed:
-            logger.info("Client disconnected, session=%s", session_key)
+            logger.info("Client disconnected, session=%s", job.id)
             ctx.data["reason"] = "disconnected"
-            ctx.status = "idle"
+            job.status = "cancelled"
+            return ""
         except Exception as e:
             logger.exception("Error in agent loop")
             await ctx.client.emit(ErrorEvent(code="internal", message=str(e)))
             ctx.data["reason"] = "error"
-            ctx.status = "idle"
+            job.status = "error"
+            job.result = str(e)
+            return ""
         finally:
             try:
                 await ctx.emit("on_complete")
             except Exception:
                 logger.warning("on_complete hook error", exc_info=True)
-            await ctx.client.emit(StatusEvent(status=ctx.status))
-            self._jobs.pop(session_key, None)
-            self._queue_messages.pop(session_key, None)
+            self._jobs.pop(job.id, None)
+            if job.depth == 0:
+                final_status = "idle" if job.status in ("cancelled", "error") else job.status
+                await ctx.client.emit(StatusEvent(status=final_status))
+                self._queue_messages.pop(job.id, None)
+            else:
+                try:
+                    await ctx.emit("on_disconnect")
+                except Exception:
+                    logger.warning("on_disconnect hook error in sub-job", exc_info=True)
 
     async def _execute_tool(
         self, tool_call: ToolCall, ctx: AgentContext
@@ -226,7 +259,7 @@ class AgentLoop:
         try:
             await ctx.emit("before_tool")
             tool = self._skills.get_tool(tool_call.name)
-            result = await tool.execute(tool_call.arguments) if tool else f"Error: unknown tool '{tool_call.name}'"
+            result = await tool.execute(tool_call.arguments, ctx=ctx) if tool else f"Error: unknown tool '{tool_call.name}'"
         except Exception as e:
             ctx.data["result"] = str(e)
             await ctx.emit("after_tool")
@@ -243,8 +276,44 @@ class AgentLoop:
         ctx.data["result"] = result
         await ctx.emit("after_tool")
 
+    async def spawn(self, content: str, parent_ctx: AgentContext) -> str:
+        import uuid
+
+        parent_job = self._jobs.get(parent_ctx.session_id)
+        if parent_job is None:
+            return "[sub-job] Error: parent job not found"
+
+        depth = parent_job.depth
+        if depth >= self._max_sub_job_depth:
+            return f"Error: maximum sub-job depth ({self._max_sub_job_depth}) reached"
+
+        root_job = parent_job
+        while root_job.parent_id is not None:
+            root_job = self._jobs[root_job.parent_id]
+        root_id = root_job.id
+
+        sub_id = f"{root_id}/sub-{uuid.uuid4().hex[:8]}"
+
+        sub_client = ClientSession(ws=getattr(parent_ctx.client, "_ws", None))
+        sub_client.session_id = sub_id
+        sub_client.is_silent = True
+
+        sub_ctx = AgentContext(
+            session_id=sub_id, client=sub_client,
+            data={**parent_ctx.data, "content": content},
+            llm=parent_ctx.llm,
+            _loop=parent_ctx._loop,
+        )
+
+        job = Job(
+            id=sub_id, parent_id=parent_ctx.session_id,
+            depth=depth + 1, status="pending", content=content, _ctx=sub_ctx,
+        )
+        self._jobs[sub_id] = job
+        await sub_ctx.emit("before_job")
+        return await self._run_loop(job)
+
     async def _on_command_cancel(self, ctx: AgentContext) -> None:
-        key = self._session_key(ctx.client)
-        t = self._jobs.get(key)
-        if t and not t.done():
-            t.cancel()
+        job = self._jobs.get(ctx.client.session_id)
+        if job and job._task and not job._task.done():
+            job._task.cancel()

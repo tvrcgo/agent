@@ -225,6 +225,25 @@ async def test_rapid_disconnect():
         return passed
 
 
+async def test_job_tree_event():
+    """JobTreeEvent broadcast during sub-job execution."""
+    print("\n=== Scenario 10: Job Tree Event ===")
+    async with websockets.connect(f"{WS_URL}?session_id=test-jobtree-{uuid.uuid4().hex[:6]}", ping_timeout=90) as ws:
+        await ws.send(_chat("use sub_job to search: Python, Go"))
+        msgs = await _collect(ws, timeout=120)
+
+        tree_events = [m for m in msgs if m["type"] == "job_tree"]
+        print(f"  job_tree events: {len(tree_events)}")
+        if tree_events:
+            last = tree_events[-1]["payload"]["jobs"]
+            for j in last:
+                print(f"    {j['id']} depth={j['depth']} status={j['status']}")
+                assert all(k in j for k in ("id", "parent_id", "depth", "status", "content")), f"missing fields in job: {j}"
+        passed = len(tree_events) > 0
+        print("  PASS" if passed else "  FAIL")
+        return passed
+
+
 async def main():
     results = {}
     scenarios = [
@@ -237,6 +256,7 @@ async def main():
         ("command_routing", test_command_routing),
         ("disconnect_mid_job", test_disconnect_mid_job),
         ("rapid_disconnect", test_rapid_disconnect),
+        ("job_tree_event", test_job_tree_event),
     ]
 
     for name, fn in scenarios:

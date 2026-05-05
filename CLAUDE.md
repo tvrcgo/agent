@@ -21,6 +21,9 @@ job 运行中收到的 chat 消息排队，下轮迭代开始前由 loop 写入 
 ### 上下文压缩
 存储无上限，冷启只加载尾部若干条。token 超阈值时通过独立 LLM 调用压缩旧消息，保留最近原文。压缩在内存完成，JSONL 保留完整历史。
 
+### Job 树
+复杂任务可通过 `sub_job` 工具并行执行。`loop.spawn()` 创建子 Job：子 Job 通过 `ClientSession.is_silent` 抑制个体事件，通过 `JobTreeEvent` 广播树结构（id、parent_id、depth、status、content）给客户端。所有 Job 共享同一 AgentLoop 的 LLM 和 skills，通过 `asyncio.gather` 并发执行。`max_sub_job_depth` 限制递归深度。
+
 ### 插件生命周期
 `on_connect` → `before_job` → `before_llm` → `after_llm` → `before_tool` → 技能执行 → `after_tool` → 循环 → `on_complete` / `on_disconnect`。`command:cancel` 由 loop 自身处理（核心行为）。JobAborted 异常中断 job。
 
@@ -35,6 +38,7 @@ job 运行中收到的 chat 消息排队，下轮迭代开始前由 loop 写入 
 
 - 按架构分层，模块只能向上或同级引用，不能 core 中的模块引用 plugins, skills 中的模块
 - agent/skills 中 skill 的依赖要和项目依赖隔离
+- 对 loop 功能的扩展，都用 hook+plugin 的方式实现；如果 hook 不够可新增，但 hook—name 要符合 loop 流程的语义，可复用
 
 ### 流程要求
 
@@ -49,6 +53,7 @@ job 运行中收到的 chat 消息排队，下轮迭代开始前由 loop 写入 
 ### 编码规范
 
 - 编码风格要保持一致（如同样是响应事件，不能有的是 on_xxx, 有的是 handle_xxx）
+- 不要随意生造新的概念，尽量对齐现有的范式
 - 在一个模块内部，针对同一对象的变量或方法放在一起（如 fork_ctx, ensure_ctx 都是操作 context）
 - 代码做重构后，如果概念或对象发生变化，要全面检查相关的变量名、方法名的语义是否一致，及时更新
 - 从同一个包中 import 多个对象时，不要分散多行 import；多行 import 间不要留空行，保持整洁
