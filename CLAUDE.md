@@ -9,7 +9,7 @@
 - **插件** (`plugin.py`)：基于钩子的事件系统，插件在 `load` 时注册 handler，`emit` 按注册顺序同步调用；`command:<action>` 命名钩子处理 UI 操作
 - **工具** (`tool.py`)：可执行工具的抽象基类和注册表，从 `agent/tools/` 加载 Tool 子类，传入 AgentLoop 供 LLM 调用
 - **技能** (`skill.py`)：SKILL.md 指令模板，从 `agent/skills/` 和 `skills/` 两个目录加载，注入系统提示词
-- **传输** (`ws.py`)：类型化 WebSocket 消息协议，StatusEvent 统一承载状态和思维内容
+- **传输** (`ws.py`)：类型化 WebSocket 消息协议，HeartbeatEvent 用于连接保活（type=heartbeat），StatusEvent 承载业务状态和思维内容
 
 ## 核心概念
 
@@ -34,6 +34,7 @@ job 运行中收到的 chat 消息排队，下轮迭代开始前由 loop 写入 
 - 会话存储：`./data/sessions/`，每会话一个 JSONL 文件
 - 默认配置从 `agent/AGENTS.md` 读取系统提示词
 - 测试清单见 `tests/README.md`，集成测试见 `tests/test_ws.py`
+- 一次性的临时文件写入系统的临时目录
 
 ### 架构规范
 
@@ -49,7 +50,6 @@ job 运行中收到的 chat 消息排队，下轮迭代开始前由 loop 写入 
 - 测试后要更新 tests/ 中的用例，保证后续测试能覆盖本次的新情况
 - 测试后更新 `CLAUDE.md`，主要概括重要机制，帮助 AI 对项目有宏观理解；不要描述技术细节或罗列代码，AI 能从代码中读懂
 - 每次改完等用户审查，不要直接 commmit 或 push remote
-- commit 详情用列表格式逐条列出主要改动点，不要罗列代码
 
 ### 编码规范
 
@@ -63,9 +63,10 @@ job 运行中收到的 chat 消息排队，下轮迭代开始前由 loop 写入 
 - 一个方法可能出现的异常，要在方法内部去处理好，不要在外层调用方去做多种异常捕获和处理
 - 不能为了方便，绕过复杂问题，用打补丁或兜底的方式处理
 - 不写 docstring，除非行为出人意料；注释要简洁清晰，只在必要的地方添加
-- 不要提前抽象，不要多余的中间层；逻辑清晰的前提下保持精简
+- 不要提前抽象，不要多余的中间层；逻辑清晰的前提下保持精简；一段代码逻辑只在一处使用时不要抽成公共函数
 - 不需要的代码和死代码及时清除干净
 - README 只包含：项目概述、主要特性、部署方式、配置说明，技术细节不展开
+- commit message 格式：`类型: 概括描述改动点`；commit 详情用列表格式逐行列出主要改动点，不要罗列代码（通过 claude 提交的 commit 加上 `Co-authored-by: claude <noreply@anthropic.com>`；通过 codex 提交的 commit 加上 `Co-authored-by: codex <codex@openai.com>`）；语言和历史记录一致
 
 ### 红线
 

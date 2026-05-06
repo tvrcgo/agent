@@ -1,4 +1,4 @@
-"""WebSocket protocol integration tests."""
+﻿"""WebSocket protocol integration tests."""
 import asyncio
 import json
 import os
@@ -9,7 +9,7 @@ WS_URL = os.environ.get("WS_URL", "ws://127.0.0.1:8765")
 
 
 def _connect(url, **kwargs):
-    """Connect with client-side keepalive disabled — Docker proxy drops native ping/pong."""
+    """Connect with client-side keepalive disabled - Docker proxy drops native ping/pong."""
     return websockets.connect(url, ping_interval=None, ping_timeout=None, open_timeout=30, **kwargs)
 
 
@@ -231,6 +231,36 @@ async def test_rapid_disconnect():
         return passed
 
 
+async def test_heartbeat():
+    """Heartbeat uses heartbeat type, not status."""
+    print("\n=== Scenario 12: Heartbeat ===")
+    async with _connect(f"{WS_URL}?session_id=test-heartbeat-{uuid.uuid4().hex[:6]}") as ws:
+        # Wait for at least one heartbeat (15s interval)
+        msgs = []
+        try:
+            for _ in range(20):  # ~20s wait
+                raw = await asyncio.wait_for(ws.recv(), timeout=2)
+                msg = json.loads(raw)
+                msgs.append(msg)
+                if msg["type"] == "heartbeat":
+                    break
+        except asyncio.TimeoutError:
+            pass
+
+        heartbeat_events = [m for m in msgs if m["type"] == "heartbeat"]
+        status_events = [m for m in msgs if m["type"] == "status"]
+        print(f"  heartbeat events: {len(heartbeat_events)}")
+        print(f"  status events: {len(status_events)}")
+        # Heartbeat should have no payload fields
+        if heartbeat_events:
+            p = heartbeat_events[0].get("payload", {})
+            print(f"  heartbeat payload: {p}")
+            assert p == {}, f"heartbeat should have empty payload: {p}"
+        passed = len(heartbeat_events) >= 1
+        print("  PASS" if passed else "  FAIL")
+        return passed
+
+
 async def test_job_tree_event():
     """JobTreeEvent broadcast during sub-job execution."""
     print("\n=== Scenario 10: Job Tree Event ===")
@@ -306,6 +336,7 @@ async def main():
         ("command_routing", test_command_routing),
         ("disconnect_mid_job", test_disconnect_mid_job),
         ("rapid_disconnect", test_rapid_disconnect),
+        ("heartbeat", test_heartbeat),
         ("job_tree_event", test_job_tree_event),
         ("long_running_subjob", test_long_running_subjob),
     ]

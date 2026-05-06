@@ -54,6 +54,11 @@ class ErrorEvent:
 
 
 @dataclass
+class HeartbeatEvent:
+    type: str = "heartbeat"
+
+
+@dataclass
 class JobTreeEvent:
     jobs: list[dict]  # [{id, parent_id, depth, status, content, result}]
     type: str = "job_tree"
@@ -65,6 +70,7 @@ AgentEvent = (
     | ToolResultEvent
     | StatusEvent
     | ErrorEvent
+    | HeartbeatEvent
     | JobTreeEvent
 )
 
@@ -169,7 +175,7 @@ class WebSocketServer:
         try:
             while True:
                 await asyncio.sleep(15)
-                await session.emit(StatusEvent(status="alive", content=""))
+                await session.emit(HeartbeatEvent())
         except Exception:
             pass
 
