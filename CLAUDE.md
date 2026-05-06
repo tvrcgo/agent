@@ -50,6 +50,7 @@ job 运行中收到的 chat 消息排队，下轮迭代开始前由 loop 写入 
 - 测试后要更新 tests/ 中的用例，保证后续测试能覆盖本次的新情况
 - 测试后更新 `CLAUDE.md`，主要概括重要机制，帮助 AI 对项目有宏观理解；不要描述技术细节或罗列代码，AI 能从代码中读懂
 - 每次改完等用户审查，不要直接 commmit 或 push remote
+- commit 前审查改动的内容有无泄密或安全风险
 
 ### 编码规范
 
@@ -66,7 +67,7 @@ job 运行中收到的 chat 消息排队，下轮迭代开始前由 loop 写入 
 - 不要提前抽象，不要多余的中间层；逻辑清晰的前提下保持精简；一段代码逻辑只在一处使用时不要抽成公共函数
 - 不需要的代码和死代码及时清除干净
 - README 只包含：项目概述、主要特性、部署方式、配置说明，技术细节不展开
-- commit message 格式：`类型: 概括描述改动点`；commit 详情用列表格式逐行列出主要改动点，不要罗列代码（通过 claude 提交的 commit 加上 `Co-authored-by: claude <noreply@anthropic.com>`；通过 codex 提交的 commit 加上 `Co-authored-by: codex <codex@openai.com>`）；语言和历史记录一致
+- commit message 格式：`类型: 概括描述改动点`；commit 详情用列表格式逐行列出主要改动点，不要罗列代码（通过 claude 提交的 commit 加上 `Co-authored-by: claude <noreply@anthropic.com>`；通过 codex 提交的 commit 加上 `Co-authored-by: codex <codex@openai.com>`）；内容语言和历史记录一致
 
 ### 红线
 
