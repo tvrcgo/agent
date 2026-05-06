@@ -50,6 +50,8 @@ class SkillRegistry:
                 if not entry.is_dir():
                     continue
                 md = entry / "SKILL.md"
+                if not md.is_file():
+                    continue
                 try:
                     sk = Skill.from_skill_md(md)
                 except Exception:
