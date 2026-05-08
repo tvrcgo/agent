@@ -3,9 +3,12 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import httpx
+
+if TYPE_CHECKING:
+    from .config import ModelSection
 
 logger = logging.getLogger(__name__)
 
@@ -153,3 +156,31 @@ class OpenAIProvider:
             tool_calls=tool_calls,
             usage=usage,
         )
+
+
+class ModelRegistry:
+
+    def __init__(self, model: ModelSection) -> None:
+        self._model = model
+        self._instances: dict[str, OpenAIProvider] = {}
+
+    async def close(self) -> None:
+        for instance in self._instances.values():
+            await instance.close()
+        self._instances.clear()
+
+    def get(self, scene: str) -> OpenAIProvider:
+        model_ref = getattr(self._model, scene, None) or self._model.main
+        return self._get_by_ref(model_ref)
+
+    def _get_by_ref(self, ref: str) -> OpenAIProvider:
+        if ref not in self._instances:
+            provider_name, model_name = ref.split(":")
+            provider = self._model.providers[provider_name]
+            model = provider.models[model_name]
+            self._instances[ref] = OpenAIProvider(
+                base_url=provider.base_url,
+                api_key=provider.api_key,
+                model=model.name,
+            )
+        return self._instances[ref]

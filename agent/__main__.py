@@ -9,7 +9,7 @@ from agent.core.plugin import PluginRegistry
 from agent.core.skill import SkillRegistry
 from agent.core.tool import ToolRegistry
 from agent.core.ws import WebSocketServer
-from agent.core.llm import OpenAIProvider
+from agent.core.llm import ModelRegistry
 
 logging.basicConfig(
     level=logging.INFO,
@@ -20,13 +20,9 @@ logger = logging.getLogger(__name__)
 
 async def main() -> None:
     config = load_config()
-    logger.info("Config loaded: model=%s, ws=%s:%d", config.model.name, config.ws.host, config.ws.port)
+    logger.info("Config loaded: model[main]=%s, ws=%s:%d", config.model.main, config.ws.host, config.ws.port)
 
-    llm = OpenAIProvider(
-        base_url=config.model.base_url,
-        api_key=config.model.api_key,
-        model=config.model.name,
-    )
+    models = ModelRegistry(model=config.model)
 
     tools = ToolRegistry()
     if config.tools:
@@ -40,7 +36,7 @@ async def main() -> None:
         plugins.load_modules(config.plugins, config)
 
     loop = AgentLoop(
-        llm=llm,
+        models=models,
         tools=tools,
         skills=skills,
         plugins=plugins,
@@ -64,7 +60,7 @@ async def main() -> None:
     finally:
         await ws.stop()
         plugins.unload_all()
-        await llm.close()
+        await models.close()
         logger.info("Agent shut down.")
 
 

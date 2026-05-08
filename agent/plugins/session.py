@@ -254,7 +254,7 @@ class SessionPlugin(Plugin):
         return self._estimate_tokens(state) >= int(self._max_tokens * self._compress_threshold)
 
     async def _compress(self, ctx: AgentContext, state: _SessionState) -> None:
-        llm = ctx.llm
+        llm = ctx.models.get("flash")
         if llm is None:
             logger.warning("No llm in context, skipping compression")
             return

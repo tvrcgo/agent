@@ -20,7 +20,7 @@ from agent.core.ws import (
     ToolCallEvent,
     ToolResultEvent,
 )
-from agent.core.llm import OpenAIProvider, LLMResponse, ToolCall
+from agent.core.llm import ModelRegistry, LLMResponse, ToolCall
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +50,7 @@ class AgentContext:
     session_id: str | None
     client: ClientSession
     data: dict[str, Any] = field(default_factory=dict)
-    llm: OpenAIProvider | None = None
+    models: Any = None
     _loop: "AgentLoop | None" = field(default=None, repr=False)
 
     async def emit(self, hook_name: str) -> None:
@@ -62,7 +62,7 @@ class AgentLoop:
 
     def __init__(
         self,
-        llm: OpenAIProvider,
+        models: ModelRegistry,
         tools: ToolRegistry,
         skills: SkillRegistry,
         plugins: PluginRegistry,
@@ -70,7 +70,7 @@ class AgentLoop:
         max_concurrent: int = 10,
         max_sub_job_depth: int = 2,
     ) -> None:
-        self._llm = llm
+        self._models = models
         self._tools = tools
         self._skills = skills
         self._plugins = plugins
@@ -90,7 +90,7 @@ class AgentLoop:
             self._contexts[sid] = AgentContext(
                 session_id=sid,
                 client=session,
-                llm=self._llm,
+                models=self._models,
                 _loop=self,
             )
         return self._contexts[sid]
@@ -101,7 +101,7 @@ class AgentLoop:
             session_id=base.session_id,
             client=base.client,
             data={**base.data, **extra},
-            llm=base.llm,
+            models=base.models,
             _loop=base._loop,
         )
 
@@ -170,7 +170,7 @@ class AgentLoop:
 
                 messages = ctx.data.get("messages", [])
                 tools = self._tools.get_defs()
-                response: LLMResponse = await self._llm.chat(
+                response: LLMResponse = await self._models.get("main").chat(
                     messages=messages,
                     tools=tools if tools else None,
                 )
@@ -304,7 +304,7 @@ class AgentLoop:
         sub_ctx = AgentContext(
             session_id=sub_id, client=sub_client,
             data={**parent_ctx.data, "content": content},
-            llm=parent_ctx.llm,
+            models=parent_ctx.models,
             _loop=parent_ctx._loop,
         )
 

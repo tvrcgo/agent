@@ -10,10 +10,21 @@ from pydantic import BaseModel
 
 
 class ModelConfig(BaseModel):
-    provider: str = "openai"
-    name: str = "gpt-4o"
-    base_url: str = "https://api.openai.com/v1"
+    name: str
+    max_tokens: int = 128000
+
+
+class ProviderConfig(BaseModel):
+    base_url: str
     api_key: str = ""
+    models: dict[str, ModelConfig] = {}
+
+
+class ModelSection(BaseModel):
+    providers: dict[str, ProviderConfig] = {}
+    main: str = "openai:default"
+    flash: str | None = None
+    embedding: str | None = None
 
 
 class AgentConfig(BaseModel):
@@ -33,7 +44,7 @@ class WSConfig(BaseModel):
 
 
 class Config(BaseModel):
-    model: ModelConfig = ModelConfig()
+    model: ModelSection = ModelSection()
     agent: AgentConfig = AgentConfig()
     ws: WSConfig = WSConfig()
     tools: list[str | dict[str, Any]] = []
