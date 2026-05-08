@@ -1,7 +1,6 @@
 <div align="center">
-# Agent
-
-灵活扩展的 Cloud Agent，AI 工作流的运行底座
+  <h1>Agent</h1>
+  灵活扩展的 Cloud Agent，AI 工作流的运行底座
 </div>
 
 ## 主要特性

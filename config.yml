@@ -17,7 +17,8 @@ ws:
   port: 8765
 
 tools:
-  - websearch
+  - websearch:
+      search_url: http://searxng:8080
   - confirm
   - subjob
 
@@ -26,3 +27,4 @@ plugins:
   - confirm
   - workspace
   - subjob
+  - logging

@@ -17,6 +17,9 @@ class Tool(ABC):
     description: str = ""
     parameters: dict[str, Any] = {}
 
+    def __init__(self, config: dict[str, Any] | None = None) -> None:
+        self.config = config or {}
+
     def as_tool_def(self) -> dict[str, Any]:
         return {
             "name": self.name,
@@ -37,10 +40,16 @@ class ToolRegistry:
     def __init__(self) -> None:
         self._tools: dict[str, Tool] = {}
 
-    def load_modules(self, names: list[str]) -> None:
+    def load_modules(self, tools: list[str | dict[str, Any]]) -> None:
         tools_dir = Path(__file__).parent.parent / "tools"
 
-        for name in names:
+        for item in tools:
+            if isinstance(item, str):
+                name, config = item, {}
+            else:
+                name = next(iter(item))
+                config = item[name] or {}
+
             self._check_deps(name, tools_dir)
 
             module_path = f"agent.tools.{name}"
@@ -54,7 +63,7 @@ class ToolRegistry:
                 attr = getattr(module, attr_name)
                 if isinstance(attr, type) and issubclass(attr, Tool) and attr is not Tool:
                     try:
-                        tool = attr()
+                        tool = attr(config=config)
                         self._tools[tool.name] = tool
                         logger.info("Tool registered: %s", tool.name)
                     except Exception:

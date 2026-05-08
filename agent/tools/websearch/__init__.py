@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import logging
+from typing import Any
 
-from ddgs import DDGS
+import httpx
 
 from agent.core.tool import Tool
 
 logger = logging.getLogger(__name__)
+
+SEARXNG_URL_DEFAULT = "http://searxng:8080"
 
 
 class WebSearchTool(Tool):
@@ -21,36 +24,41 @@ class WebSearchTool(Tool):
                 "description": "Maximum number of results to return (default 5)",
                 "default": 5,
             },
-            "timeout": {
-                "type": "integer",
-                "description": "Timeout in seconds (default 15)",
-                "default": 15,
-            },
         },
         "required": ["query"],
     }
 
+    def __init__(self, config: dict[str, Any] | None = None) -> None:
+        super().__init__(config)
+        self._searxng_url = self.config.get("search_url", SEARXNG_URL_DEFAULT)
+
     async def execute(self, arguments: dict, ctx=None) -> str:
         query = arguments.get("query", "")
         max_results = int(arguments.get("max_results", 5))
-        timeout = int(arguments.get("timeout", 15))
 
-        for backend in ("yandex",):
-            try:
-                results = list(DDGS(timeout=timeout).text(query, max_results=max_results, backend=backend))
-                if results:
-                    return self._format_results(results, max_results)
-            except Exception as e:
-                logger.info("Backend %s failed for query=%s: %s", backend, query, e)
+        try:
+            async with httpx.AsyncClient(timeout=15) as client:
+                resp = await client.get(
+                    f"{self._searxng_url}/search",
+                    params={"q": query, "format": "json"},
+                )
+                resp.raise_for_status()
+                data = resp.json()
+        except Exception as e:
+            logger.warning("SearXNG request failed for query=%s: %s", query, e)
+            return f"Search failed: {e}"
 
-        return f"No results found for: {query}"
+        results = data.get("results", [])
+        if not results:
+            return f"No results found for: {query}"
+        return self._format_results(results, max_results)
 
     @staticmethod
     def _format_results(results: list[dict], max_results: int) -> str:
         lines = []
         for i, r in enumerate(results[:max_results], 1):
             title = r.get("title", "Untitled")
-            href = r.get("href", "")
-            body = r.get("body", "")
-            lines.append(f"{i}. {title}\n   {href}\n   {body}")
+            url = r.get("url", "")
+            content = r.get("content", "")
+            lines.append(f"{i}. {title}\n   {url}\n   {content}")
         return "\n\n".join(lines)

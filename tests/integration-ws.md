@@ -1,6 +1,6 @@
 # WebSocket 集成测试
 
-Agent 需在运行中：`sudo docker-compose up -d --build`
+Agent 需在运行中（含 SearXNG 服务）：`docker compose up -d --build`
 
 ## 场景列表
 
