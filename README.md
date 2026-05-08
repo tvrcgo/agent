@@ -31,9 +31,19 @@ docker compose up -d --build
 
 ```yaml
 model:
-  name: deepseek-v4-pro
-  base_url: https://api.deepseek.com
-  api_key: ${DEEPSEEK_API_KEY}
+  providers:
+    deepseek:
+      base_url: https://api.deepseek.com
+      api_key: ${DEEPSEEK_API_KEY}
+      models:
+        v4-pro:
+          name: deepseek-v4-pro
+          max_tokens: 128000
+        v4-flash:
+          name: deepseek-v4-flash
+          max_tokens: 128000
+  main: deepseek:v4-pro
+  flash: deepseek:v4-flash
 
 agent:
   max_tokens: 128000
