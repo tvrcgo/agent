@@ -35,6 +35,7 @@ job 运行中收到的 chat 消息排队，下轮迭代开始前由 loop 写入 
 - 默认配置从 `agent/AGENTS.md` 读取系统提示词
 - 测试清单见 `tests/README.md`，集成测试见 `tests/test_ws.py`
 - 一次性的临时文件写入系统的临时目录
+- 外部服务独立部署在 `services/` 下，通过共享 Docker 网络与 agent 通信，agent 不强依赖这些服务
 
 ### 架构规范
 

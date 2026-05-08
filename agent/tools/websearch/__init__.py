@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
 import httpx
+from ddgs import DDGS
 
 from agent.core.tool import Tool
 
@@ -36,6 +38,14 @@ class WebSearchTool(Tool):
         query = arguments.get("query", "")
         max_results = int(arguments.get("max_results", 5))
 
+        results = await self._search_searxng(query, max_results)
+        if not results:
+            results = await self._search_ddgs(query, max_results)
+        if not results:
+            return f"No results found for: {query}"
+        return self._format_results(results, max_results)
+
+    async def _search_searxng(self, query: str, max_results: int) -> list[dict]:
         try:
             async with httpx.AsyncClient(timeout=15) as client:
                 resp = await client.get(
@@ -43,15 +53,27 @@ class WebSearchTool(Tool):
                     params={"q": query, "format": "json"},
                 )
                 resp.raise_for_status()
-                data = resp.json()
+                return resp.json().get("results", [])
         except Exception as e:
-            logger.warning("SearXNG request failed for query=%s: %s", query, e)
-            return f"Search failed: {e}"
+            logger.info("SearXNG unavailable, falling back to ddgs: %s", e)
+            return []
 
-        results = data.get("results", [])
-        if not results:
-            return f"No results found for: {query}"
-        return self._format_results(results, max_results)
+    async def _search_ddgs(self, query: str, max_results: int) -> list[dict]:
+        def _run() -> list[dict]:
+            for backend in ("api", "html", "lite"):
+                try:
+                    results = list(DDGS(timeout=10).text(query, max_results=max_results, backend=backend))
+                    if results:
+                        return [{"title": r.get("title", ""), "url": r.get("href", ""), "content": r.get("body", "")} for r in results]
+                except Exception as e:
+                    logger.info("ddgs backend %s failed: %s", backend, e)
+            return []
+
+        try:
+            return await asyncio.to_thread(_run)
+        except Exception as e:
+            logger.warning("ddgs fallback failed: %s", e)
+            return []
 
     @staticmethod
     def _format_results(results: list[dict], max_results: int) -> str:

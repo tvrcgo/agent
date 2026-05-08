@@ -1,0 +1,16 @@
+name: agent-services
+
+services:
+  searxng_search:
+    image: searxng/searxng:latest
+    container_name: searxng
+    volumes:
+      - ./settings.yml:/etc/searxng/settings.yml:ro
+    networks:
+      - agent
+    restart: unless-stopped
+
+networks:
+  agent:
+    external: true
+    name: ai_agent

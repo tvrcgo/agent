@@ -1,0 +1,27 @@
+use_default_settings:
+  engines:
+    keep_only:
+      - google
+      - bing
+      - yandex
+      - wikipedia
+      - baidu
+
+server:
+  secret_key: "agent-searxng-internal"
+  limiter: false
+
+outgoing:
+  request_timeout: 10.0
+
+search:
+  formats:
+    - json
+
+engines:
+  - name: bing
+    disabled: false
+  - name: yandex
+    disabled: false
+  - name: baidu
+    disabled: false

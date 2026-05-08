@@ -11,26 +11,8 @@ services:
       - ./data/sessions:/app/data/sessions
       - ./workspace:/app/workspace
       - ./skills:/app/skills
-    depends_on:
-      - searxng
-    restart: unless-stopped
-
-  searxng:
-    image: searxng/searxng:latest
-    container_name: searxng
-    entrypoint: ["/bin/sh", "-c"]
-    command:
-      - |
-        cat > /etc/searxng/settings.yml <<'EOF'
-        use_default_settings: true
-        server:
-          secret_key: "agent-searxng-internal"
-          limiter: false
-        search:
-          formats:
-            - json
-        EOF
-        exec /usr/local/searxng/entrypoint.sh
+    networks:
+      - agent
     restart: unless-stopped
 
   playground:
@@ -43,3 +25,6 @@ services:
     working_dir: /app
     command: python -m http.server 8766
     restart: unless-stopped
+
+networks:
+  agent:

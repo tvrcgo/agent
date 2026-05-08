@@ -56,8 +56,20 @@ class LoggingPlugin(Plugin):
         self._iteration_counts[sid] += 1
 
         messages = ctx.data.get("messages", [])
-        logger.info("[%s] Round %d >>> %d",
-                    sid, self._iteration_counts[sid], len(messages))
+
+        # Find last user message to show what LLM is responding to
+        last_user_msg = None
+        for msg in reversed(messages):
+            if hasattr(msg, 'role') and msg.role == 'user':
+                last_user_msg = msg.content if hasattr(msg, 'content') else str(msg)
+                break
+
+        if last_user_msg:
+            logger.info("[%s] Round %d >>> %s",
+                        sid, self._iteration_counts[sid], _truncate(last_user_msg))
+        else:
+            logger.info("[%s] Round %d >>> (no user message, %d messages total)",
+                        sid, self._iteration_counts[sid], len(messages))
 
     async def _on_after_llm(self, ctx: AgentContext) -> None:
         sid = ctx.session_id or "unknown"
