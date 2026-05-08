@@ -11,9 +11,6 @@ from agent.core.tool import Tool
 
 logger = logging.getLogger(__name__)
 
-SEARXNG_URL_DEFAULT = "http://searxng:8080"
-
-
 class WebSearchTool(Tool):
     name = "web_search"
     description = "Search the web for information. Returns title, URL, and snippet for each result."
@@ -32,13 +29,15 @@ class WebSearchTool(Tool):
 
     def __init__(self, config: dict[str, Any] | None = None) -> None:
         super().__init__(config)
-        self._searxng_url = self.config.get("search_url", SEARXNG_URL_DEFAULT)
+        self._searxng_url = self.config.get("search_url")
 
     async def execute(self, arguments: dict, ctx=None) -> str:
         query = arguments.get("query", "")
         max_results = int(arguments.get("max_results", 5))
 
-        results = await self._search_searxng(query, max_results)
+        results = []
+        if self._searxng_url:
+            results = await self._search_searxng(query, max_results)
         if not results:
             results = await self._search_ddgs(query, max_results)
         if not results:

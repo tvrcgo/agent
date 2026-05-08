@@ -1,4 +1,4 @@
-name: AI
+name: agent
 services:
   agent:
     build: .
@@ -28,3 +28,4 @@ services:
 
 networks:
   agent:
+    name: agent

@@ -13,4 +13,4 @@ services:
 networks:
   agent:
     external: true
-    name: ai_agent
+    name: agent
