@@ -9,7 +9,7 @@ from typing import Any, TYPE_CHECKING
 
 from agent.core.plugin import Plugin, PluginRegistry
 from agent.core.loop import AgentContext
-from agent.core.llm import Message, ToolCall
+from agent.core.model import Message, ToolCall
 
 if TYPE_CHECKING:
     from agent.core.config import Config

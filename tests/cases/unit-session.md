@@ -47,7 +47,7 @@
 ```bash
 uv run python -c "
 from agent.plugins.session import SessionPlugin, _SessionState
-from agent.core.llm import Message, ToolCall
+from agent.core.model import Message, ToolCall
 
 def _make_plugin(max_tokens=65536, compress_threshold=0.9, max_load_messages=100):
     p = SessionPlugin()

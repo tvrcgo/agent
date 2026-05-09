@@ -20,7 +20,7 @@ from agent.core.ws import (
     ToolCallEvent,
     ToolResultEvent,
 )
-from agent.core.llm import ModelRegistry, LLMResponse, ToolCall
+from agent.core.model import ModelRegistry, ModelResponse, ToolCall
 
 logger = logging.getLogger(__name__)
 
@@ -170,7 +170,7 @@ class AgentLoop:
 
                 messages = ctx.data.get("messages", [])
                 tools = self._tools.get_defs()
-                response: LLMResponse = await self._models.get("main").chat(
+                response: ModelResponse = await self._models.get("main").chat(
                     messages=messages,
                     tools=tools if tools else None,
                 )

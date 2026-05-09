@@ -37,20 +37,20 @@ class Message:
 
 
 @dataclass
-class LLMResponse:
+class ModelResponse:
     text: str | None = None
     thinking: str | None = None
     tool_calls: list[ToolCall] | None = None
     usage: Usage | None = None
 
 
-class OpenAIProvider:
+class ModelProvider:
 
-    def __init__(self, base_url: str, api_key: str, model: str) -> None:
+    def __init__(self, base_url: str, api_key: str, model_name: str) -> None:
         self._base_url = base_url.rstrip("/")
         self._api_key = api_key
-        self._model = model
-        self._client = httpx.AsyncClient(
+        self._model_name = model_name
+        self._http = httpx.AsyncClient(
             base_url=self._base_url,
             headers={
                 "Authorization": f"Bearer {self._api_key}",
@@ -60,15 +60,15 @@ class OpenAIProvider:
         )
 
     async def close(self) -> None:
-        await self._client.aclose()
+        await self._http.aclose()
 
     async def chat(
         self,
         messages: list[Message],
         tools: list[dict[str, Any]] | None = None,
-    ) -> LLMResponse:
+    ) -> ModelResponse:
         payload: dict[str, Any] = {
-            "model": self._model,
+            "model": self._model_name,
             "messages": self._format_messages(messages),
         }
 
@@ -76,7 +76,7 @@ class OpenAIProvider:
             payload["tools"] = self._format_tools(tools)
 
         try:
-            resp = await self._client.post("/chat/completions", json=payload)
+            resp = await self._http.post("/chat/completions", json=payload)
             resp.raise_for_status()
         except httpx.HTTPStatusError as e:
             body = e.response.text[:500] if e.response else ""
@@ -116,7 +116,7 @@ class OpenAIProvider:
     def _format_tools(self, tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
         return [{"type": "function", "function": t} for t in tools]
 
-    def _parse_response(self, data: dict[str, Any]) -> LLMResponse:
+    def _parse_response(self, data: dict[str, Any]) -> ModelResponse:
         choice = data["choices"][0]
         message = choice["message"]
 
@@ -150,7 +150,7 @@ class OpenAIProvider:
                 total_tokens=u.get("total_tokens", 0),
             )
 
-        return LLMResponse(
+        return ModelResponse(
             text=text,
             thinking=thinking,
             tool_calls=tool_calls,
@@ -160,27 +160,27 @@ class OpenAIProvider:
 
 class ModelRegistry:
 
-    def __init__(self, model: ModelSection) -> None:
-        self._model = model
-        self._instances: dict[str, OpenAIProvider] = {}
+    def __init__(self, config: ModelSection) -> None:
+        self._config = config
+        self._providers: dict[str, ModelProvider] = {}
 
     async def close(self) -> None:
-        for instance in self._instances.values():
-            await instance.close()
-        self._instances.clear()
+        for provider in self._providers.values():
+            await provider.close()
+        self._providers.clear()
 
-    def get(self, scene: str) -> OpenAIProvider:
-        model_ref = getattr(self._model, scene, None) or self._model.main
-        return self._get_by_ref(model_ref)
+    def get(self, scene: str) -> ModelProvider:
+        model_ref = getattr(self._config, scene, None) or self._config.main
+        return self._resolve(model_ref)
 
-    def _get_by_ref(self, ref: str) -> OpenAIProvider:
-        if ref not in self._instances:
+    def _resolve(self, ref: str) -> ModelProvider:
+        if ref not in self._providers:
             provider_name, model_name = ref.split(":")
-            provider = self._model.providers[provider_name]
+            provider = self._config.providers[provider_name]
             model = provider.models[model_name]
-            self._instances[ref] = OpenAIProvider(
+            self._providers[ref] = ModelProvider(
                 base_url=provider.base_url,
                 api_key=provider.api_key,
-                model=model.name,
+                model_name=model.name,
             )
-        return self._instances[ref]
+        return self._providers[ref]

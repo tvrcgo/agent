@@ -9,7 +9,7 @@ from agent.core.plugin import PluginRegistry
 from agent.core.skill import SkillRegistry
 from agent.core.tool import ToolRegistry
 from agent.core.ws import WebSocketServer
-from agent.core.llm import ModelRegistry
+from agent.core.model import ModelRegistry
 
 logging.basicConfig(
     level=logging.INFO,
@@ -22,7 +22,7 @@ async def main() -> None:
     config = load_config()
     logger.info("Config loaded: model[main]=%s, ws=%s:%d", config.model.main, config.ws.host, config.ws.port)
 
-    models = ModelRegistry(model=config.model)
+    models = ModelRegistry(config=config.model)
 
     tools = ToolRegistry()
     if config.tools:
