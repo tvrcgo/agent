@@ -57,7 +57,7 @@ class LoggingPlugin(Plugin):
 
         messages = ctx.data.get("messages", [])
 
-        # Find last user message to show what LLM is responding to
+        # Find last user message to show what model is responding to
         last_user_msg = None
         for msg in reversed(messages):
             if hasattr(msg, 'role') and msg.role == 'user':
@@ -78,11 +78,11 @@ class LoggingPlugin(Plugin):
             return
 
         if response.thinking:
-            logger.info("[%s] LLM thinking: %s", sid, _truncate(response.thinking))
+            logger.info("[%s] Model thinking: %s", sid, _truncate(response.thinking))
 
         if response.tool_calls:
             tool_names = [tc.name for tc in response.tool_calls]
-            logger.info("[%s] LLM requested %d tool call(s): %s",
+            logger.info("[%s] Model requested %d tool call(s): %s",
                         sid, len(response.tool_calls), ", ".join(tool_names))
 
         if response.text:

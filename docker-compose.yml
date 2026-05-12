@@ -1,12 +1,12 @@
-name: agent
+﻿name: agent
 services:
   agent:
     build: .
     container_name: agent
     ports:
       - "8765:8765"
-    environment:
-      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
+    env_file:
+      - .env
     volumes:
       - ./data/sessions:/app/data/sessions
       - ./workspace:/app/workspace

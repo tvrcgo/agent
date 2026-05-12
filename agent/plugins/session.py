@@ -289,7 +289,7 @@ class SessionPlugin(Plugin):
                 return
             summary = response.text
         except Exception:
-            logger.warning("Compression LLM call failed", exc_info=True)
+            logger.warning("Compression model call failed", exc_info=True)
             return
 
         state.messages = [

@@ -70,6 +70,7 @@ class ModelProvider:
         payload: dict[str, Any] = {
             "model": self._model_name,
             "messages": self._format_messages(messages),
+            "stream": False,
         }
 
         if tools:
@@ -80,10 +81,10 @@ class ModelProvider:
             resp.raise_for_status()
         except httpx.HTTPStatusError as e:
             body = e.response.text[:500] if e.response else ""
-            logger.error("LLM HTTP %s: %s", e.response.status_code, body)
+            logger.error("Model HTTP %s: %s", e.response.status_code, body)
             raise
         except Exception:
-            logger.exception("LLM request failed")
+            logger.exception("Model request failed")
             raise
 
         return self._parse_response(resp.json())

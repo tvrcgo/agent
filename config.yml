@@ -1,4 +1,4 @@
-model:
+﻿model:
   providers:
     deepseek:
       base_url: https://api.deepseek.com
@@ -27,10 +27,17 @@ ws:
   port: 8765
 
 tools:
+  - subjob
+  - confirm
   - websearch:
       search_url: http://searxng:8080
-  - confirm
-  - subjob
+  - cloud_file:
+      endpoint: ${OSS_ENDPOINT}
+      bucket: ${OSS_BUCKET}
+      access_key_id: ${OSS_ACCESS_KEY_ID}
+      access_key_secret: ${OSS_ACCESS_KEY_SECRET}
+      base_path: outputs/
+      public_url: ${OSS_PUBLIC_URL}
 
 plugins:
   - session
