@@ -20,6 +20,8 @@ services:
     container_name: playground
     ports:
       - "8766:8766"
+    environment:
+      - TZ=Asia/Shanghai
     volumes:
       - ./playground:/app:ro
     working_dir: /app

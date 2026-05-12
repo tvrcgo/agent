@@ -4,6 +4,8 @@ services:
   searxng_search:
     image: searxng/searxng:latest
     container_name: searxng
+    environment:
+      - TZ=Asia/Shanghai
     volumes:
       - ./settings.yml:/etc/searxng/settings.yml:ro
     networks:
