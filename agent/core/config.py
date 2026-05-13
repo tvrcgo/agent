@@ -22,9 +22,13 @@ class ProviderConfig(BaseModel):
 
 class ModelSection(BaseModel):
     providers: dict[str, ProviderConfig] = {}
-    main: str = "openai:default"
-    flash: str | None = None
-    embedding: str | None = None
+
+    class Alias(BaseModel):
+        main: str = "openai:default"
+        flash: str | None = None
+        embedding: str | None = None
+
+    alias: Alias = Alias()
 
 
 class AgentConfig(BaseModel):

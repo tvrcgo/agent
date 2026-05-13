@@ -1,4 +1,4 @@
-﻿model:
+model:
   providers:
     deepseek:
       base_url: https://api.deepseek.com
@@ -10,9 +10,9 @@
         v4-flash:
           name: deepseek-v4-flash
           max_tokens: 128000
-
-  main: deepseek:v4-pro
-  flash: deepseek:v4-flash
+  alias:
+    main: dsm:glm-5
+    flash: deepseek:v4-flash
 
 agent:
   max_concurrent_sessions: 10

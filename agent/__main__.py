@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 async def main() -> None:
     config = load_config()
-    logger.info("Config loaded: model[main]=%s, ws=%s:%d", config.model.main, config.ws.host, config.ws.port)
+    logger.info("Config loaded: model[main]=%s, ws=%s:%d", config.model.alias.main, config.ws.host, config.ws.port)
 
     models = ModelRegistry(config=config.model)
 

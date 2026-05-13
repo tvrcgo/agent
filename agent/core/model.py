@@ -171,7 +171,7 @@ class ModelRegistry:
         self._providers.clear()
 
     def get(self, scene: str) -> ModelProvider:
-        model_ref = getattr(self._config, scene, None) or self._config.main
+        model_ref = getattr(self._config.alias, scene, None) or self._config.alias.main
         return self._resolve(model_ref)
 
     def _resolve(self, ref: str) -> ModelProvider:
