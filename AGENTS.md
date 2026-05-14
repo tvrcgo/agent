@@ -26,7 +26,7 @@ job 运行中收到的 chat 消息排队，下轮迭代开始前由 loop 写入 
 复杂任务可通过 `sub_job` 工具并行执行。`loop.spawn()` 创建子 Job：子 Job 通过 `ClientSession.is_silent` 抑制个体事件，通过 `JobTreeEvent` 广播树结构（id、parent_id、depth、status、content）给客户端。所有 Job 共享同一 AgentLoop 的 LLM、tools 和 skills，通过 `asyncio.gather` 并发执行。`max_sub_job_depth` 限制递归深度。
 
 ### 插件生命周期
-`on_connect` → `before_job` → `before_llm` → `after_llm` → `before_tool` → 工具执行 → `after_tool` → 循环 → `on_complete` / `on_disconnect`。`command:cancel` 由 loop 自身处理（核心行为）。JobAborted 异常中断 job。
+`on_connect` → `before_job` → `before_llm` → `after_llm` → `before_tool` → 工具执行 → `after_tool` → 循环 → `after_job` / `on_error` → `on_complete` / `on_disconnect`。`command:cancel` 由 loop 自身处理（核心行为）。
 
 ## 约定
 

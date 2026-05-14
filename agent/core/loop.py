@@ -63,13 +63,6 @@ class OutputMessage:
     events: list[Any] = field(default_factory=list)
 
 
-class JobAborted(Exception):
-
-    def __init__(self, message: str = "Job aborted") -> None:
-        self.message = message
-        super().__init__(message)
-
-
 @dataclass
 class Job:
     id: str
@@ -110,6 +103,7 @@ class AgentLoop:
         self._max_iterations = max_iterations
         self._max_concurrent = max_concurrent
         self._jobs: dict[str, Job] = {}
+        self._queue_jobs: list[Job] = []
         self._ctx: AgentContext | None = None
         self._queue_messages: dict[str, list[str]] = {}
 
@@ -144,8 +138,8 @@ class AgentLoop:
 
         active = sum(1 for j in self._jobs.values() if j._task is not None and not j._task.done())
         if active >= self._max_concurrent:
-            await self.ctx.emit("on_max_sessions", job)
-            logger.warning("Too many concurrent jobs: %d", active)
+            self._queue_jobs.append(job)
+            logger.info("Job %s queued (active: %d, max: %d)", job.id, active, self._max_concurrent)
             return
 
         job.output = OutputMessage(session_id=job.session_id)
@@ -211,37 +205,24 @@ class AgentLoop:
 
             msg = f"Reached maximum iterations ({self._max_iterations})"
             logger.warning(msg)
-            job.data["reason"] = msg
+            job.data["error"] = msg
             job.status = "error"
             await ctx.emit("after_loop", job)
             await ctx.emit("after_job", job)
 
-        except asyncio.CancelledError:
-            logger.info("Job cancelled, id=%s", job.id)
-            job.data["reason"] = "cancelled"
-            job.status = "cancelled"
-            await ctx.emit("after_loop", job)
-            await ctx.emit("after_job", job)
-        except JobAborted as e:
-            logger.info("Job aborted, id=%s: %s", job.id, e.message)
-            if job.output:
-                job.output.content = e.message
-            job.data["reason"] = "aborted"
-            job.status = "done"
-            await ctx.emit("after_loop", job)
-            await ctx.emit("after_job", job)
         except Exception as e:
-            logger.exception("Error in agent loop")
-            job.data["reason"] = "error"
+            logger.exception("Error in agent loop, id=%s", job.id)
+            job.data["error"] = e
             job.status = "error"
-            await ctx.emit("after_loop", job)
-            await ctx.emit("after_job", job)
+            await ctx.emit("on_error", job)
+
         finally:
-            try:
-                await ctx.emit("on_complete", job)
-            except Exception:
-                logger.warning("on_complete hook error", exc_info=True)
+            await ctx.emit("on_complete", job)
             self._jobs.pop(job.id, None)
+            if self._queue_jobs:
+                next_job = self._queue_jobs.pop(0)
+                logger.info("Starting queued job %s", next_job.id)
+                asyncio.create_task(self._handle_chat(next_job))
 
     async def _execute_tool(
         self, tool_call: ToolCall, job: Job
@@ -259,11 +240,17 @@ class AgentLoop:
         result = ""
         error = ""
 
+        await ctx.emit("before_tool", job)
+
         try:
-            await ctx.emit("before_tool", job)
             tool = self._tools.get(tool_call.name)
-            result = await tool.execute(tool_call.arguments, ctx=ctx, job=job) if tool else f"Error: unknown tool '{tool_call.name}'"
+            if tool:
+                result = await tool.execute(tool_call.arguments, ctx=ctx, job=job)
+            else:
+                result = f"Error: unknown tool '{tool_call.name}'"
+                error = result
         except Exception as e:
+            logger.exception("Tool execution error: %s", tool_call.name)
             result = str(e)
             error = result
 

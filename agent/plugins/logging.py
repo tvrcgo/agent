@@ -30,6 +30,8 @@ class LoggingPlugin(Plugin):
         registry.on("after_llm", self._on_after_llm)
         registry.on("before_tool", self._on_before_tool)
         registry.on("after_tool", self._on_after_tool)
+        registry.on("after_job", self._on_after_job)
+        registry.on("on_error", self._on_error)
         registry.on("on_complete", self._on_complete)
 
         logger.info("LoggingPlugin initialized")
@@ -108,10 +110,22 @@ class LoggingPlugin(Plugin):
         if tool_call:
             logger.info("[%s] tool-result: %s", jid, _truncate(result))
 
-    async def _on_complete(self, ctx: AgentContext, job: Job | None) -> None:
+    async def _on_after_job(self, ctx: AgentContext, job: Job | None) -> None:
         if job is None:
             return
         jid = job.id
         reason = job.data.get("reason", "unknown")
         logger.info("[%s] job finished: %s", jid, reason)
+
+    async def _on_error(self, ctx: AgentContext, job: Job | None) -> None:
+        if job is None:
+            return
+        jid = job.id
+        error = job.data.get("error")
+        logger.error("[%s] job error: %s", jid, error)
+
+    async def _on_complete(self, ctx: AgentContext, job: Job | None) -> None:
+        if job is None:
+            return
+        jid = job.id
         self._iteration_counts.pop(jid, None)

@@ -28,7 +28,6 @@ agent:
 
 tools:
   - subjob
-  - confirm
   - websearch:
       search_url: http://searxng:8080
   - cloud_file:
@@ -49,7 +48,6 @@ plugins:
       compress_threshold: 0.9
       compress_keep_recent: 5
       system_prompt_path: agent/AGENTS.md
-  - confirm
   - workspace
   - subjob:
       max_depth: 2

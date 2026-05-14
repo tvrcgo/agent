@@ -43,7 +43,6 @@ class SessionPlugin(Plugin):
         registry.on("before_tools", self._on_before_tools)
         registry.on("after_tool", self._on_after_tool)
         registry.on("after_job", self._on_after_job)
-        registry.on("on_max_sessions", self._on_max_sessions)
         registry.on("command:compress", self._on_compress)
 
         self._max_load_messages = config.get('max_load_messages', 100)
@@ -424,10 +423,4 @@ class SessionPlugin(Plugin):
         else:
             job.output.events.append(MessageEvent(type="status", content="done"))
 
-        await ctx.emit("on_output", job)
-
-    async def _on_max_sessions(self, ctx: AgentContext, job: Job | None) -> None:
-        if job is None or job.output is None:
-            return
-        job.output.events.append(MessageEvent(type="message", content="Error: Too many concurrent sessions"))
         await ctx.emit("on_output", job)

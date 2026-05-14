@@ -4,8 +4,7 @@ import asyncio
 from typing import TYPE_CHECKING
 
 from agent.core.plugin import Plugin, PluginRegistry
-from agent.core.loop import JobAborted, AgentContext, Job
-
+from agent.core.loop import AgentContext, Job
 
 
 class ConfirmPlugin(Plugin):
@@ -33,7 +32,7 @@ class ConfirmPlugin(Plugin):
         _, decision = self._pending.pop(tool_call.id, (None, "deny"))
 
         if decision == "deny":
-            raise JobAborted("Operation cancelled by user.")
+            job.data["result"] = "Operation cancelled by user."
 
     async def _on_command_confirm(self, ctx: AgentContext, job: Job | None) -> None:
         if job is None:

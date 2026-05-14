@@ -26,6 +26,7 @@ class SubJobPlugin(Plugin):
         registry.on("agent_start", self._on_agent_start)
         registry.on("after_llm", self._send_jobs)
         registry.on("after_tools", self._send_jobs)
+        registry.on("after_job", self._send_jobs)
         registry.on("after_job", self._on_after_job)
         self._max_sub_job_depth = config.get("max_depth", 2)
         logger.info("SubJobPlugin initialized, max_depth=%d", self._max_sub_job_depth)
@@ -33,10 +34,10 @@ class SubJobPlugin(Plugin):
     async def _on_agent_start(self, ctx: AgentContext, job: Job | None) -> None:
         ctx.subjob = self._create_subjob
 
-
     async def _send_jobs(self, ctx: AgentContext, job: Job | None) -> None:
         if job is None or ctx._self is None:
             return
+        session_id = job.session_id
         jobs_data = [
             {
                 "id": j.id,
@@ -46,6 +47,7 @@ class SubJobPlugin(Plugin):
                 "content": j.input.content if j.input else "",
             }
             for j in ctx._self._jobs.values()
+            if j.session_id == session_id
         ]
         if job.output is not None:
             job.output.events.append(MessageEvent(type="data", data={"name": "jobs", "jobs": jobs_data}))
@@ -75,7 +77,6 @@ class SubJobPlugin(Plugin):
         self._depth[sub_id] = depth + 1
         self._parent[sub_id] = parent_job.id
 
-        # Use parent's session_id (root session) for all sub jobs
         sub_job = Job(
             id=sub_id,
             session_id=parent_job.session_id,

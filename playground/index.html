@@ -729,13 +729,14 @@ $jobTreeList.innerHTML = '';
   // Group sub jobs by parent_id
   const parentGroups = new Map();
   for (const j of subJobs) {
-    const pid = j.parent_id || 'root';
+    const pid = j.parent_id;
+    if (!pid) continue;
     if (!parentGroups.has(pid)) parentGroups.set(pid, []);
     parentGroups.get(pid).push(j);
   }
 
   // Find parent jobs from full list
-  const parentJobs = jobs.filter(j => j.depth === 0 && parentGroups.has(j.id));
+  const parentJobs = jobs.filter(j => parentGroups.has(j.id));
 
   for (const pj of parentJobs) {
     const group = parentGroups.get(pj.id) || [];
