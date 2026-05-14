@@ -40,8 +40,9 @@ job 运行中收到的 chat 消息排队，下轮迭代开始前由 loop 写入 
 ### 架构规范
 
 - 按架构分层，模块只能向下或同级引用，不能上向引用（core 中的模块引用 plugins, skills 中的模块）
-- **`loop.py` 是核心流程，不要随便修改**，对 loop 功能的扩展，都用 hook+plugin 的方式实现；如果 hook 不够可新增，但 hook—name 要符合 loop 流程的语义，可复用
-- agent/tools 中 tool 的依赖要和项目依赖隔离
+- **`loop.py` 是核心流程，不能随便修改**，对 loop 功能的扩展，都用 hook+plugin 的方式实现；如果 hook 不够可新增，但 hook—name 要符合 loop 流程的语义，可复用
+- plugin 之间不能相互依赖
+- tool 的依赖要和项目依赖隔离
 
 ### 流程要求
 
@@ -78,3 +79,4 @@ job 运行中收到的 chat 消息排队，下轮迭代开始前由 loop 写入 
 ### 红线
 
 - 密钥、token、账密等信息禁止添加到 git
+- 禁止未经许可更新 git 暂存区

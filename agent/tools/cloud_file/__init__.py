@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 from datetime import datetime
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 from agent.core.tool import Tool
+
+if TYPE_CHECKING:
+    from agent.core.loop import AgentContext, Job
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +57,7 @@ class OssWriteFileTool(Tool):
             self._bucket = oss2.Bucket(auth, self._endpoint, self._bucket_name)
         return self._bucket
 
-    async def execute(self, arguments: dict, ctx=None) -> str:
+    async def execute(self, arguments: dict, ctx: AgentContext, job: Job) -> str:
         filename = arguments.get("filename", "")
         content = arguments.get("content", "")
         content_type = arguments.get("content_type")
@@ -88,11 +92,10 @@ class OssWriteFileTool(Tool):
         object_key = f"{self._base_path}/{month_dir}/{object_name}" if self._base_path else f"{month_dir}/{object_name}"
 
         try:
-            import asyncio
             bucket = self._get_bucket()
 
             def _upload():
-                bucket.put_object(object_key, content.encode("utf-8"), headers={"Content-Type": content_type})
+                bucket.put_object(object_key, content.encode("utf-8"), headers={"Content-Type": f"{content_type}; charset=utf-8"})
 
             await asyncio.to_thread(_upload)
 

@@ -8,7 +8,6 @@ from agent.core.loop import AgentLoop
 from agent.core.plugin import PluginRegistry
 from agent.core.skill import SkillRegistry
 from agent.core.tool import ToolRegistry
-from agent.core.ws import WebSocketServer
 from agent.core.model import ModelRegistry
 
 logging.basicConfig(
@@ -20,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 async def main() -> None:
     config = load_config()
-    logger.info("Config loaded: model[main]=%s, ws=%s:%d", config.model.alias.main, config.ws.host, config.ws.port)
+    logger.info("Config loaded: model[main]=%s", config.model.alias.main)
 
     models = ModelRegistry(config=config.model)
 
@@ -33,7 +32,7 @@ async def main() -> None:
 
     plugins = PluginRegistry()
     if config.plugins:
-        plugins.load_modules(config.plugins, config)
+        plugins.load_modules(config.plugins)
 
     loop = AgentLoop(
         models=models,
@@ -42,23 +41,18 @@ async def main() -> None:
         plugins=plugins,
         max_iterations=config.agent.max_iterations,
         max_concurrent=config.agent.max_concurrent_sessions,
-        max_sub_job_depth=config.agent.max_sub_job_depth,
     )
 
-    ws = WebSocketServer(host=config.ws.host, port=config.ws.port)
-    ws.on_connect(loop.on_connect)
-    ws.on_message(loop.on_message)
-    ws.on_disconnect(loop.on_disconnect)
-    await ws.start()
+    await loop.start()
 
     logger.info("Agent is running. Waiting for connections...")
 
     try:
-        await asyncio.Future()  # run forever
+        await asyncio.Future()
     except asyncio.CancelledError:
         pass
     finally:
-        await ws.stop()
+        await loop.stop()
         plugins.unload_all()
         await models.close()
         logger.info("Agent shut down.")

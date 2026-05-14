@@ -1,13 +1,10 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
 
 from agent.core.plugin import Plugin, PluginRegistry
-from agent.core.loop import AgentContext
+from agent.core.loop import AgentContext, Job
 
-if TYPE_CHECKING:
-    from agent.core.config import Config
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +24,7 @@ class LoggingPlugin(Plugin):
     def __init__(self) -> None:
         self._iteration_counts: dict[str, int] = {}
 
-    def load(self, registry: PluginRegistry, config: Config) -> None:
+    def load(self, registry: PluginRegistry, config: dict = {}) -> None:
         registry.on("before_job", self._on_before_job)
         registry.on("before_llm", self._on_before_llm)
         registry.on("after_llm", self._on_after_llm)
@@ -41,21 +38,25 @@ class LoggingPlugin(Plugin):
         self._iteration_counts.clear()
         logger.info("LoggingPlugin shut down")
 
-    async def _on_before_job(self, ctx: AgentContext) -> None:
-        sid = ctx.session_id or "unknown"
-        content = ctx.data.get("content", "")
+    async def _on_before_job(self, ctx: AgentContext, job: Job | None) -> None:
+        if job is None:
+            return
+        jid = job.id
+        content = job.input.content if job.input else ""
         if content:
-            logger.info("[%s] received message: %s", sid, _truncate(content))
-            logger.info("[%s] job start", sid)
-            self._iteration_counts[sid] = 0
+            logger.info("[%s] received message: %s", jid, _truncate(content))
+            logger.info("[%s] job start", jid)
+            self._iteration_counts[jid] = 0
 
-    async def _on_before_llm(self, ctx: AgentContext) -> None:
-        sid = ctx.session_id or "unknown"
-        if sid not in self._iteration_counts:
-            self._iteration_counts[sid] = 0
-        self._iteration_counts[sid] += 1
+    async def _on_before_llm(self, ctx: AgentContext, job: Job | None) -> None:
+        if job is None:
+            return
+        jid = job.id
+        if jid not in self._iteration_counts:
+            self._iteration_counts[jid] = 0
+        self._iteration_counts[jid] += 1
 
-        messages = ctx.data.get("messages", [])
+        messages = job.data.get("messages", [])
 
         # Find last user message to show what model is responding to
         last_user_msg = None
@@ -66,43 +67,51 @@ class LoggingPlugin(Plugin):
 
         if last_user_msg:
             logger.info("[%s] Round %d >>> %s",
-                        sid, self._iteration_counts[sid], _truncate(last_user_msg))
+                        jid, self._iteration_counts[jid], _truncate(last_user_msg))
         else:
             logger.info("[%s] Round %d >>> (no user message, %d messages total)",
-                        sid, self._iteration_counts[sid], len(messages))
+                        jid, self._iteration_counts[jid], len(messages))
 
-    async def _on_after_llm(self, ctx: AgentContext) -> None:
-        sid = ctx.session_id or "unknown"
-        response = ctx.data.get("response")
+    async def _on_after_llm(self, ctx: AgentContext, job: Job | None) -> None:
+        if job is None:
+            return
+        jid = job.id
+        response = job.data.get("response")
         if response is None:
             return
 
         if response.thinking:
-            logger.info("[%s] Model thinking: %s", sid, _truncate(response.thinking))
+            logger.info("[%s] LLM thinking: %s", jid, _truncate(response.thinking))
 
         if response.tool_calls:
             tool_names = [tc.name for tc in response.tool_calls]
-            logger.info("[%s] Model requested %d tool call(s): %s",
-                        sid, len(response.tool_calls), ", ".join(tool_names))
+            logger.info("[%s] LLM maked %d tool call(s): %s",
+                        jid, len(response.tool_calls), ", ".join(tool_names))
 
         if response.text:
-            logger.info("[%s] reply message: %s", sid, _truncate(response.text))
+            logger.info("[%s] reply message: %s", jid, _truncate(response.text))
 
-    async def _on_before_tool(self, ctx: AgentContext) -> None:
-        sid = ctx.session_id or "unknown"
-        tool_call = ctx.data.get("tool_call")
+    async def _on_before_tool(self, ctx: AgentContext, job: Job | None) -> None:
+        if job is None:
+            return
+        jid = job.id
+        tool_call = job.data.get("tool_call")
         if tool_call:
-            logger.info("[%s] tool-call: %s (%s)", sid, tool_call.name, tool_call.arguments)
+            logger.info("[%s] tool-call: %s (%s)", jid, tool_call.name, tool_call.arguments)
 
-    async def _on_after_tool(self, ctx: AgentContext) -> None:
-        sid = ctx.session_id or "unknown"
-        tool_call = ctx.data.get("tool_call")
-        result = ctx.data.get("result", "")
+    async def _on_after_tool(self, ctx: AgentContext, job: Job | None) -> None:
+        if job is None:
+            return
+        jid = job.id
+        tool_call = job.data.get("tool_call")
+        result = job.data.get("result", "")
         if tool_call:
-            logger.info("[%s] tool-result: %s", sid, _truncate(result))
+            logger.info("[%s] tool-result: %s", jid, _truncate(result))
 
-    async def _on_complete(self, ctx: AgentContext) -> None:
-        sid = ctx.session_id or "unknown"
-        reason = ctx.data.get("reason", "unknown")
-        logger.info("[%s] job finished: %s", sid, reason)
-        self._iteration_counts.pop(sid, None)
+    async def _on_complete(self, ctx: AgentContext, job: Job | None) -> None:
+        if job is None:
+            return
+        jid = job.id
+        reason = job.data.get("reason", "unknown")
+        logger.info("[%s] job finished: %s", jid, reason)
+        self._iteration_counts.pop(jid, None)

@@ -33,26 +33,14 @@ class ModelSection(BaseModel):
 
 class AgentConfig(BaseModel):
     max_iterations: int = 100
-    system_prompt_path: str = "agent/AGENTS.md"
-    max_load_messages: int = 100
-    max_tokens: int = 128000
-    compress_threshold: float = 0.9
-    compress_keep_recent: int = 10
     max_concurrent_sessions: int = 10
-    max_sub_job_depth: int = 2
-
-
-class WSConfig(BaseModel):
-    host: str = "0.0.0.0"
-    port: int = 8765
 
 
 class Config(BaseModel):
     model: ModelSection = ModelSection()
     agent: AgentConfig = AgentConfig()
-    ws: WSConfig = WSConfig()
     tools: list[str | dict[str, Any]] = []
-    plugins: list[str] = []
+    plugins: list[str | dict[str, Any]] = []
 
 
 def _load_dotenv(path: str | Path = ".env") -> None:

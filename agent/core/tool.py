@@ -6,7 +6,10 @@ import logging
 import re
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any
+from typing import Any, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from agent.core.loop import AgentContext, Job
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +31,7 @@ class Tool(ABC):
         }
 
     @abstractmethod
-    async def execute(self, arguments: dict[str, Any], ctx: Any = None) -> str:
+    async def execute(self, arguments: dict[str, Any], ctx: AgentContext, job: Job) -> str:
         ...
 
 
@@ -93,7 +96,7 @@ class ToolRegistry:
             pkg = m.group(1)
             try:
                 _md.version(pkg)
-            except _md.PackageNotFoundError:
+            except _md.PackageNotFoundException:
                 raise ToolRegistry.DependencyError(
                     f"Tool '{name}' requires '{line}' but it is not installed. "
                     f"Run 'pip install -r agent/tools/{name}/requirements.txt' or rebuild the image."

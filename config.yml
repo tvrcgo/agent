@@ -10,21 +10,21 @@ model:
         v4-flash:
           name: deepseek-v4-flash
           max_tokens: 128000
+    local:
+      base_url: http://host.docker.internal:18003/v1
+      api_key: "111"
+      models:
+        glm-5:
+          name: zhipu/glm-5
+          max_tokens: 128000
+
   alias:
-    main: dsm:glm-5
+    main: local:glm-5
     flash: deepseek:v4-flash
 
 agent:
   max_concurrent_sessions: 10
   max_iterations: 100
-  max_load_messages: 100
-  max_tokens: 128000
-  compress_threshold: 0.9
-  compress_keep_recent: 5
-
-ws:
-  host: 0.0.0.0
-  port: 8765
 
 tools:
   - subjob
@@ -36,12 +36,21 @@ tools:
       bucket: ${OSS_BUCKET}
       access_key_id: ${OSS_ACCESS_KEY_ID}
       access_key_secret: ${OSS_ACCESS_KEY_SECRET}
-      base_path: outputs/
+      base_path: agent/outputs
       public_url: ${OSS_PUBLIC_URL}
 
 plugins:
-  - session
+  - websocket:
+      host: 0.0.0.0
+      port: 8765
+  - session:
+      max_load_messages: 100
+      max_tokens: 128000
+      compress_threshold: 0.9
+      compress_keep_recent: 5
+      system_prompt_path: agent/AGENTS.md
   - confirm
   - workspace
-  - subjob
+  - subjob:
+      max_depth: 2
   - logging

@@ -8,11 +8,9 @@ from pathlib import Path
 from typing import Any, TYPE_CHECKING
 
 from agent.core.plugin import Plugin, PluginRegistry
-from agent.core.loop import AgentContext
+from agent.core.loop import AgentContext, Job, MessageEvent
 from agent.core.model import Message, ToolCall
 
-if TYPE_CHECKING:
-    from agent.core.config import Config
 
 logger = logging.getLogger(__name__)
 
@@ -37,22 +35,24 @@ class SessionPlugin(Plugin):
         self._compress_threshold: float = 0.9
         self._compress_keep_recent: int = 10
 
-    def load(self, registry: PluginRegistry, config: Config) -> None:
-        registry.on("on_connect", self._on_connect)
-        registry.on("on_disconnect", self._on_disconnect)
+    def load(self, registry: PluginRegistry, config: dict = {}) -> None:
         registry.on("before_job", self._on_before_job)
         registry.on("before_llm", self._on_before_llm)
         registry.on("after_llm", self._on_after_llm)
+        registry.on("before_tool", self._on_before_tool)
+        registry.on("before_tools", self._on_before_tools)
         registry.on("after_tool", self._on_after_tool)
+        registry.on("after_job", self._on_after_job)
+        registry.on("on_max_sessions", self._on_max_sessions)
         registry.on("command:compress", self._on_compress)
 
-        self._max_load_messages = config.agent.max_load_messages
-        self._max_tokens = config.agent.max_tokens
-        self._compress_threshold = config.agent.compress_threshold
-        self._compress_keep_recent = config.agent.compress_keep_recent
+        self._max_load_messages = config.get('max_load_messages', 100)
+        self._max_tokens = config.get('max_tokens', 65536)
+        self._compress_threshold = config.get('compress_threshold', 0.9)
+        self._compress_keep_recent = config.get('compress_keep_recent', 10)
         self._base_path.mkdir(parents=True, exist_ok=True)
 
-        prompt_path = Path(config.agent.system_prompt_path)
+        prompt_path = Path(config.get('system_prompt_path', 'agent/AGENTS.md'))
         if prompt_path.exists():
             self._system_prompt = Message(role="system", content=prompt_path.read_text(encoding="utf-8"))
         else:
@@ -64,54 +64,67 @@ class SessionPlugin(Plugin):
         self._sessions.clear()
         logger.info("SessionPlugin shut down")
 
-
-    async def _on_connect(self, ctx: AgentContext) -> None:
-        self._get_or_load(ctx.session_id)
-
-    async def _on_disconnect(self, ctx: AgentContext) -> None:
-        self._sessions.pop(ctx.session_id, None)
-
-    async def _on_before_job(self, ctx: AgentContext) -> None:
-        content = ctx.data.get("content", "")
+    async def _on_before_job(self, ctx: AgentContext, job: Job | None) -> None:
+        if job is None or job.input is None:
+            return
+        content = job.input.content
         if not content:
             return
-        state = self._get_or_load(ctx.session_id)
+        # Each job writes to its own storage (job.id)
+        # Sub-jobs get empty context, only their own input message
+        state = self._get_or_load(job.id)
         state.messages.append(Message(role="user", content=content))
-        self._append(ctx.session_id, {"role": "user", "content": content})
+        self._append(job.id, {"role": "user", "content": content})
 
-    async def _on_before_llm(self, ctx: AgentContext) -> None:
-        state = self._get_or_load(ctx.session_id)
+    async def _on_before_llm(self, ctx: AgentContext, job: Job | None) -> None:
+        if job is None or job.output is None:
+            return
+
+        # Only send status from root job
+        if job.id == job.session_id:
+            job.output.events.append(MessageEvent(type="status", content="thinking"))
+            await ctx.emit("on_output", job)
+
+        state = self._get_or_load(job.id)
 
         if self._needs_compression(state):
             if state.cold_loaded:
                 logger.warning(
                     "Session %s needs compaction right after cold start — "
                     "consider increasing max_load_messages (currently %d)",
-                    ctx.session_id, self._max_load_messages,
+                    job.id, self._max_load_messages,
                 )
                 state.cold_loaded = False
-            await self._compress(ctx, state)
+            await self._compress(ctx, state, job)
 
-        queue = ctx.data.pop("queue_messages", None)
-        if queue:
-            for content in queue:
+        # Only root job consumes queued messages
+        if job.id == job.session_id and job.loop and job.loop.queue_messages:
+            for content in job.loop.queue_messages:
                 state.messages.append(Message(role="user", content=content))
-                self._append(ctx.session_id, {"role": "user", "content": content})
+                self._append(job.id, {"role": "user", "content": content})
 
         msgs = self._get_messages(state)
         now = datetime.now().strftime("%Y-%m-%d %A %H:%M:%S")
         msgs[0] = Message(role="system", content=msgs[0].content + f"\n\nCurrent time: {now}")
 
-        if skills_prompt := ctx.data.get("skills_prompt"):
-            msgs[0] = Message(role="system", content=msgs[0].content + "\n\n" + skills_prompt)
+        if job.loop and job.loop.skills_prompt:
+            msgs[0] = Message(role="system", content=msgs[0].content + "\n\n" + job.loop.skills_prompt)
 
-        ctx.data["messages"] = msgs
+        job.data["messages"] = msgs
 
-    async def _on_after_llm(self, ctx: AgentContext) -> None:
-        response = ctx.data.get("response")
+    async def _on_after_llm(self, ctx: AgentContext, job: Job | None) -> None:
+        if job is None:
+            return
+        response = job.data.get("response")
         if response is None:
             return
-        state = self._get_or_load(ctx.session_id)
+
+        # Only emit thinking content from root job
+        if response.thinking and job.output is not None and job.id == job.session_id:
+            job.output.events.append(MessageEvent(type="status", content="thinking", data={"content": response.thinking}))
+            await ctx.emit("on_output", job)
+
+        state = self._get_or_load(job.id)
         state.messages.append(Message(
             role="assistant",
             content=response.text,
@@ -120,33 +133,65 @@ class SessionPlugin(Plugin):
         ))
         if response.usage:
             state.last_prompt_tokens = response.usage.prompt_tokens
-        self._append(ctx.session_id, self._response_to_dict(response))
+        self._append(job.id, self._response_to_dict(response))
 
-    async def _on_after_tool(self, ctx: AgentContext) -> None:
-        tool_call = ctx.data.get("tool_call")
-        result = ctx.data.get("result", "")
+
+    async def _on_before_tool(self, ctx: AgentContext, job: Job | None) -> None:
+        if job is None or job.output is None:
+            return
+        # Only send tool_call event from root job
+        if job.id != job.session_id:
+            return
+        tool_call = job.data.get("tool_call")
         if tool_call:
-            state = self._get_or_load(ctx.session_id)
+            job.output.events.append(MessageEvent(type="data", data={
+                "name": "tool_call",
+                "id": tool_call.id,
+                "tool": tool_call.name,
+                "arguments": tool_call.arguments,
+            }))
+            await ctx.emit("on_output", job)
+
+    async def _on_after_tool(self, ctx: AgentContext, job: Job | None) -> None:
+        if job is None:
+            return
+        tool_call = job.data.get("tool_call")
+        result = job.data.get("result", "")
+
+        # Only send tool_result event from root job
+        if tool_call and job.output is not None and job.id == job.session_id:
+            job.output.events.append(MessageEvent(type="data", data={
+                "name": "tool_result",
+                "id": tool_call.id,
+                "tool": tool_call.name,
+                "result": result,
+                "error": job.data.get("error", ""),
+            }))
+            await ctx.emit("on_output", job)
+
+        # Persist to session (for all jobs)
+        if tool_call:
+            state = self._get_or_load(job.id)
             state.messages.append(Message(role="tool", content=result, tool_call_id=tool_call.id))
-            self._append(ctx.session_id, {
+            self._append(job.id, {
                 "role": "tool",
                 "content": result,
                 "tool_call_id": tool_call.id,
             })
 
-    async def _on_compress(self, ctx: AgentContext) -> None:
-        state = self._get_or_load(ctx.session_id)
-        await self._compress(ctx, state)
+    async def _on_compress(self, ctx: AgentContext, job: Job | None) -> None:
+        if job is None:
+            return
+        state = self._get_or_load(job.id)
+        await self._compress(ctx, state, job)
 
+    def _get_or_load(self, job_id: str) -> _SessionState:
+        if job_id not in self._sessions:
+            self._sessions[job_id] = self._load_session(job_id)
+        return self._sessions[job_id]
 
-    def _get_or_load(self, session_id: str | None) -> _SessionState:
-        assert session_id is not None
-        if session_id not in self._sessions:
-            self._sessions[session_id] = self._load_session(session_id)
-        return self._sessions[session_id]
-
-    def _load_session(self, session_id: str) -> _SessionState:
-        path = self._session_file(session_id)
+    def _load_session(self, job_id: str) -> _SessionState:
+        path = self._session_file(job_id)
         if not path.exists():
             return _SessionState(system_prompt=self._system_prompt)
         try:
@@ -163,22 +208,22 @@ class SessionPlugin(Plugin):
                     state.messages.append(msg)
             self._clean_orphan_tool_calls(state)
             state.cold_loaded = True
-            logger.info("Session %s loaded from disk (%d messages)", session_id, len(messages))
+            logger.info("Session %s loaded from disk (%d messages)", job_id, len(messages))
             return state
         except Exception:
-            logger.warning("Failed to load session %s, starting fresh", session_id, exc_info=True)
+            logger.warning("Failed to load session %s, starting fresh", job_id, exc_info=True)
         return _SessionState(system_prompt=self._system_prompt)
 
-    def _append(self, session_id: str, msg_dict: dict) -> None:
-        path = self._session_file(session_id)
+    def _append(self, job_id: str, msg_dict: dict) -> None:
+        path = self._session_file(job_id)
         try:
             with open(path, "a", encoding="utf-8") as f:
                 f.write(json.dumps(msg_dict, ensure_ascii=False) + "\n")
         except Exception:
-            logger.warning("Failed to append to session file %s", session_id, exc_info=True)
+            logger.warning("Failed to append to session file %s", job_id, exc_info=True)
 
-    def _session_file(self, session_id: str) -> Path:
-        return self._base_path / f"{session_id.replace('/', '---')}.jsonl"
+    def _session_file(self, job_id: str) -> Path:
+        return self._base_path / f"{job_id.replace('/', '--')}.jsonl"
 
     def _tail_read(self, path: Path) -> list[str]:
         try:
@@ -208,7 +253,6 @@ class SessionPlugin(Plugin):
         except Exception:
             logger.warning("Failed to tail-read %s", path, exc_info=True)
             return []
-
 
     @staticmethod
     def _clean_orphan_tool_calls(state: _SessionState) -> None:
@@ -253,7 +297,7 @@ class SessionPlugin(Plugin):
     def _needs_compression(self, state: _SessionState) -> bool:
         return self._estimate_tokens(state) >= int(self._max_tokens * self._compress_threshold)
 
-    async def _compress(self, ctx: AgentContext, state: _SessionState) -> None:
+    async def _compress(self, ctx: AgentContext, state: _SessionState, job: Job) -> None:
         llm = ctx.models.get("flash")
         if llm is None:
             logger.warning("No llm in context, skipping compression")
@@ -298,7 +342,6 @@ class SessionPlugin(Plugin):
         state.last_prompt_tokens = 0
         logger.info("Session compressed: %d messages -> summary + %d recent",
                      len(old), safe_keep)
-
 
     @staticmethod
     def _response_to_dict(response: Any) -> dict[str, Any]:
@@ -353,3 +396,38 @@ class SessionPlugin(Plugin):
             tool_calls=tool_calls,
             tool_call_id=d.get("tool_call_id"),
         )
+
+    async def _on_before_tools(self, ctx: AgentContext, job: Job | None) -> None:
+        if job is None or job.output is None:
+            return
+        # Only send status from root job
+        if job.id != job.session_id:
+            return
+        job.output.events.append(MessageEvent(type="status", content="acting"))
+        await ctx.emit("on_output", job)
+
+    async def _on_after_job(self, ctx: AgentContext, job: Job | None) -> None:
+        if job is None or job.output is None:
+            return
+
+        # Only send final message/status from root job
+        if job.id != job.session_id:
+            return
+
+        if job.output.content:
+            job.output.events.append(MessageEvent(type="message", content=job.output.content))
+
+        if job.status == "error":
+            job.output.events.append(MessageEvent(type="status", content="error", data={"reason": job.data.get("reason", "Unknown error")}))
+        elif job.status == "cancelled":
+            job.output.events.append(MessageEvent(type="status", content="cancelled"))
+        else:
+            job.output.events.append(MessageEvent(type="status", content="done"))
+
+        await ctx.emit("on_output", job)
+
+    async def _on_max_sessions(self, ctx: AgentContext, job: Job | None) -> None:
+        if job is None or job.output is None:
+            return
+        job.output.events.append(MessageEvent(type="message", content="Error: Too many concurrent sessions"))
+        await ctx.emit("on_output", job)

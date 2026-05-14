@@ -2,13 +2,10 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 from agent.core.plugin import Plugin, PluginRegistry
-from agent.core.loop import AgentContext
+from agent.core.loop import AgentContext, Job
 
-if TYPE_CHECKING:
-    from agent.core.config import Config
 
 logger = logging.getLogger(__name__)
 
@@ -20,28 +17,34 @@ class WorkspacePlugin(Plugin):
     def __init__(self) -> None:
         self._base_path = Path("./workspace")
 
-    def load(self, registry: PluginRegistry, config: Config) -> None:
-        registry.on("on_connect", self._on_connect)
+    def load(self, registry: PluginRegistry, config: dict = {}) -> None:
+        registry.on("before_job", self._on_before_job)
         registry.on("before_llm", self._on_before_llm)
         logger.info("WorkspacePlugin initialized, base_path=%s", self._base_path)
 
     def unload(self) -> None:
         logger.info("WorkspacePlugin shut down")
 
-    async def _on_connect(self, ctx: AgentContext) -> None:
-        sid = ctx.session_id
-        ws_dir = (self._base_path / sid).resolve()
+    async def _on_before_job(self, ctx: AgentContext, job: Job | None) -> None:
+        if job is None:
+            return
+        # Only initialize workspace for root jobs (id equals session_id)
+        if job.id != job.session_id:
+            return
+        ws_dir = (self._base_path / job.session_id).resolve()
         ws_dir.mkdir(parents=True, exist_ok=True)
-        ctx.data["workspace"] = ws_dir
+        job.data["workspace"] = ws_dir
         logger.info("Workspace ready: %s", ws_dir)
 
-    async def _on_before_llm(self, ctx: AgentContext) -> None:
-        if ctx.data.get("_ws_injected"):
+    async def _on_before_llm(self, ctx: AgentContext, job: Job | None) -> None:
+        if job is None:
             return
-        ws_dir = ctx.data.get("workspace")
+        if job.data.get("_ws_injected"):
+            return
+        ws_dir = job.data.get("workspace")
         if ws_dir is None:
             return
-        messages = ctx.data.get("messages")
+        messages = job.data.get("messages")
         if not messages:
             return
         system_msg = messages[0]
@@ -53,4 +56,4 @@ class WorkspacePlugin(Plugin):
             "as the working directory for all file paths."
         )
         system_msg.content += hint
-        ctx.data["_ws_injected"] = True
+        job.data["_ws_injected"] = True

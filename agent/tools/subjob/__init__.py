@@ -1,16 +1,16 @@
 from __future__ import annotations
 
 import asyncio
-import logging
-from typing import Any
+from typing import TYPE_CHECKING
 
 from agent.core.tool import Tool
 
-logger = logging.getLogger(__name__)
+if TYPE_CHECKING:
+    from agent.core.loop import AgentContext, Job
 
 
 class SubJobTool(Tool):
-    name = "sub_job"
+    name = "subjob"
     description = (
         "Decompose a complex task into independent sub-jobs and execute "
         "them in parallel (max 5 sub-jobs). Each sub-job runs independently "
@@ -37,24 +37,25 @@ class SubJobTool(Tool):
         "required": ["jobs"],
     }
 
-    async def execute(self, arguments: dict, ctx: Any = None) -> str:
-        jobs = arguments.get("jobs", [])
-        if not jobs:
+    async def execute(self, arguments: dict, ctx: AgentContext, job: Job) -> str:
+        jobs_to_run = arguments.get("jobs", [])
+        if not jobs_to_run:
             return "Error: no jobs provided"
-        if ctx is None or ctx._loop is None:
-            return "Error: sub-job execution unavailable"
-        if len(jobs) > 5:
-            return f"Error: at most 5 sub-jobs allowed, got {len(jobs)}"
+        if len(jobs_to_run) > 5:
+            return f"Error: at most 5 sub-jobs allowed, got {len(jobs_to_run)}"
 
-        async def run_one(job: dict, i: int) -> tuple[int, str, str]:
-            content = job.get("content", f"job-{i + 1}")
-            result = await ctx._loop.spawn(content, ctx)
+        subjob = getattr(ctx, "subjob", None)
+        if subjob is None:
+            return "Error: subjob not available"
+
+        async def run_one(j: dict, i: int) -> tuple[int, str, str]:
+            content = j.get("content", f"job-{i + 1}")
+            future = subjob(content, job, ctx)
+            result = await future
             return (i, content, result)
 
-        results = await asyncio.gather(*[run_one(j, i) for i, j in enumerate(jobs)])
+        results = await asyncio.gather(*[run_one(j, i) for i, j in enumerate(jobs_to_run)])
         results.sort(key=lambda x: x[0])
 
-        lines = []
-        for i, content, result in results:
-            lines.append(f"## Sub-job {i + 1}: {content}\n\n{result}")
+        lines = [f"## Sub-job {i + 1}: {content}\n\n{result}" for i, content, result in results]
         return "\n\n---\n\n".join(lines)

@@ -1,30 +1,52 @@
+from __future__ import annotations
+
 """Unit tests for SubJobTool."""
 import asyncio
+from dataclasses import dataclass
+
+
+@dataclass
+class MockJob:
+    id: str = "test-job"
+    session_id: str = "test-session"
+    status: str = "pending"
 
 
 async def test_empty_tasks():
     from agent.tools.subjob import SubJobTool
+    from agent.core.loop import AgentContext
+
     tool = SubJobTool()
-    result = await tool.execute({"jobs": []})
+    ctx = AgentContext()
+    job = MockJob()
+    result = await tool.execute({"jobs": []}, ctx=ctx, job=job)
     assert "no jobs" in result, f"unexpected: {result}"
 
 
-async def test_no_loop():
+async def test_no_subjob():
     from agent.tools.subjob import SubJobTool
+    from agent.core.loop import AgentContext
+
     tool = SubJobTool()
-    result = await tool.execute({"jobs": [{"content": "test"}]}, ctx=None)
-    assert "unavailable" in result, f"unexpected: {result}"
+    ctx = AgentContext()
+    job = MockJob()
+    result = await tool.execute({"jobs": [{"content": "test"}]}, ctx=ctx, job=job)
+    assert "not available" in result, f"unexpected: {result}"
 
 
 async def test_result_aggregation():
     from agent.tools.subjob import SubJobTool
+    from agent.core.loop import AgentContext
 
-    class MockLoop:
-        async def spawn(self, content, ctx):
-            return f"Result for: {content}"
+    ctx = AgentContext()
+    job = MockJob()
 
-    class MockCtx:
-        _loop = MockLoop()
+    def mock_subjob(content, parent_job, ctx):
+        future: asyncio.Future[str] = asyncio.get_event_loop().create_future()
+        future.set_result(f"Result for: {content}")
+        return future
+
+    ctx.subjob = mock_subjob
 
     tool = SubJobTool()
     jobs = [
@@ -32,7 +54,7 @@ async def test_result_aggregation():
         {"content": "job-b"},
         {"content": "job-c"},
     ]
-    result = await tool.execute({"jobs": jobs}, ctx=MockCtx())
+    result = await tool.execute({"jobs": jobs}, ctx=ctx, job=job)
     assert "## Sub-job 1" in result
     assert "Result for: job-a" in result
     assert "Result for: job-b" in result
@@ -42,27 +64,101 @@ async def test_result_aggregation():
 
 async def test_too_many_jobs():
     from agent.tools.subjob import SubJobTool
+    from agent.core.loop import AgentContext
 
-    class MockLoop:
-        async def spawn(self, content, ctx):
-            return f"Result for: {content}"
+    ctx = AgentContext()
+    job = MockJob()
 
-    class MockCtx:
-        _loop = MockLoop()
+    def mock_subjob(content, parent_job, ctx):
+        future: asyncio.Future[str] = asyncio.get_event_loop().create_future()
+        future.set_result(f"Result for: {content}")
+        return future
+
+    ctx.subjob = mock_subjob
 
     tool = SubJobTool()
     jobs = [{"content": f"job-{i}"} for i in range(6)]
-    result = await tool.execute({"jobs": jobs}, ctx=MockCtx())
+    result = await tool.execute({"jobs": jobs}, ctx=ctx, job=job)
     assert "at most 5" in result, f"unexpected: {result}"
+
+
+async def test_max_depth_reached():
+    """Subjob returns error when max depth is reached."""
+    from agent.tools.subjob import SubJobTool
+    from agent.core.loop import AgentContext, Job, InputMessage
+
+    ctx = AgentContext()
+    parent_job = Job(
+        id="parent-job",
+        session_id="parent-session",
+        status="thinking",
+        input=InputMessage(content="test"),
+    )
+
+    calls = []
+    def mock_subjob(content, pj, c):
+        calls.append(content)
+        future: asyncio.Future[str] = asyncio.get_event_loop().create_future()
+        future.set_result(f"Error: maximum sub-job depth (2) reached")
+        return future
+
+    ctx.subjob = mock_subjob
+
+    tool = SubJobTool()
+    result = await tool.execute({"jobs": [{"content": "task A"}]}, ctx=ctx, job=parent_job)
+    
+    assert "maximum sub-job depth" in result
+    print(f"  max depth error returned: {result[:60]}...")
+
+
+async def test_parallel_execution():
+    """Multiple subjobs run in parallel and aggregate results."""
+    from agent.tools.subjob import SubJobTool
+    from agent.core.loop import AgentContext, Job, InputMessage
+
+    ctx = AgentContext()
+    parent_job = Job(
+        id="parent-job",
+        session_id="parent-session",
+        status="thinking",
+        input=InputMessage(content="test"),
+    )
+
+    results = {}
+    def mock_subjob(content, pj, c):
+        future: asyncio.Future[str] = asyncio.get_event_loop().create_future()
+        async def complete():
+            await asyncio.sleep(0.1)
+            results[content] = f"Result for {content}"
+            return results[content]
+        return asyncio.ensure_future(complete())
+
+    ctx.subjob = lambda c, pj, cx: mock_subjob(c, pj, cx)
+
+    tool = SubJobTool()
+    jobs = [
+        {"content": "task-A"},
+        {"content": "task-B"},
+        {"content": "task-C"},
+    ]
+    result = await tool.execute({"jobs": jobs}, ctx=ctx, job=parent_job)
+    
+    assert "Sub-job 1" in result
+    assert "Sub-job 2" in result
+    assert "Sub-job 3" in result
+    assert "---" in result
+    print(f"  parallel results aggregated")
 
 
 async def main():
     results = {}
     scenarios = [
         ("empty_tasks", test_empty_tasks),
-        ("no_loop", test_no_loop),
+        ("no_subjob", test_no_subjob),
         ("result_aggregation", test_result_aggregation),
         ("too_many_jobs", test_too_many_jobs),
+        ("max_depth_reached", test_max_depth_reached),
+        ("parallel_execution", test_parallel_execution),
     ]
 
     for name, fn in scenarios:

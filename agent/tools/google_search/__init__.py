@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 import httpx
 
 from agent.core.tool import Tool
+
+if TYPE_CHECKING:
+    from agent.core.loop import AgentContext, Job
 
 logger = logging.getLogger(__name__)
 
@@ -29,9 +32,9 @@ class GoogleSearchTool(Tool):
     def __init__(self, config: dict[str, Any] | None = None) -> None:
         super().__init__(config)
         self._api_key = self.config.get("api_key")
-        self._cx = self.config.get("cx")  # Custom Search Engine ID
+        self._cx = self.config.get("cx")
 
-    async def execute(self, arguments: dict, ctx=None) -> str:
+    async def execute(self, arguments: dict, ctx: AgentContext, job: Job) -> str:
         if not self._api_key or not self._cx:
             return "Google Search not configured. Set api_key and cx in config."
 

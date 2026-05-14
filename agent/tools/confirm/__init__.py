@@ -1,6 +1,11 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from agent.core.tool import Tool
+
+if TYPE_CHECKING:
+    from agent.core.loop import AgentContext, Job
 
 
 class RequestConfirmationTool(Tool):
@@ -21,5 +26,5 @@ class RequestConfirmationTool(Tool):
         "required": ["description"],
     }
 
-    async def execute(self, arguments: dict, ctx=None) -> str:
+    async def execute(self, arguments: dict, ctx: AgentContext, job: Job) -> str:
         return "User approved the operation."

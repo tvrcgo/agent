@@ -7,19 +7,18 @@ from collections import defaultdict
 from typing import Callable, Awaitable, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from agent.core.loop import AgentContext
-    from agent.core.config import Config
+    from agent.core.loop import AgentContext, Job
 
 logger = logging.getLogger(__name__)
 
-PluginHandler = Callable[["AgentContext"], Awaitable[None]]
+PluginHandler = Callable[["AgentContext", "Job | None"], Awaitable[None]]
 
 
 class Plugin(ABC):
 
     name: str = ""
 
-    def load(self, registry: PluginRegistry, config: Config) -> None:
+    def load(self, registry: PluginRegistry, config: dict = {}) -> None:
         pass
 
     def unload(self) -> None:
@@ -35,12 +34,18 @@ class PluginRegistry:
     def on(self, hook_name: str, handler: PluginHandler) -> None:
         self._handlers[hook_name].append(handler)
 
-    async def emit(self, hook_name: str, ctx: AgentContext) -> None:
+    async def emit(self, hook_name: str, ctx: AgentContext, job: Job | None) -> None:
         for handler in self._handlers[hook_name]:
-            await handler(ctx)
+            await handler(ctx, job)
 
-    def load_modules(self, names: list[str], config: Config) -> None:
-        for name in names:
+    def load_modules(self, items: list[str | dict]) -> None:
+        for item in items:
+            if isinstance(item, str):
+                name, config = item, {}
+            else:
+                name = next(iter(item))
+                config = item[name] or {}
+
             module_path = f"agent.plugins.{name}"
             try:
                 module = importlib.import_module(module_path)

@@ -2,14 +2,18 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 import httpx
 from ddgs import DDGS
 
 from agent.core.tool import Tool
 
+if TYPE_CHECKING:
+    from agent.core.loop import AgentContext, Job
+
 logger = logging.getLogger(__name__)
+
 
 class WebSearchTool(Tool):
     name = "web_search"
@@ -31,7 +35,7 @@ class WebSearchTool(Tool):
         super().__init__(config)
         self._searxng_url = self.config.get("search_url")
 
-    async def execute(self, arguments: dict, ctx=None) -> str:
+    async def execute(self, arguments: dict, ctx: AgentContext, job: Job) -> str:
         query = arguments.get("query", "")
         max_results = int(arguments.get("max_results", 5))
 

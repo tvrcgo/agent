@@ -956,59 +956,59 @@ function ensureConnection(sessionId) {
   ws.onmessage = async (e) => {
     const msg = JSON.parse(e.data);
     const type = msg.type;
-    const p = msg.payload || {};
+    const d = msg.payload || {};
     const isCurrent = sessionId === currentSessionId;
 
     switch (type) {
-      case 'tool_call':
-        if (p.name === 'request_confirmation') {
-          const content = (p.arguments || {}).description || 'Proceed?';
-          await appendMessage(sessionId, 'confirm', content, { id: p.id });
-          if (isCurrent) renderMessage('confirm', content, { id: p.id });
-        } else {
-          const content = `${p.name}(${JSON.stringify(p.arguments || {})})`;
-          const meta = { id: p.id, name: p.name, arguments: p.arguments || {} };
-          await appendMessage(sessionId, 'tool_call', content, meta);
-          if (isCurrent) renderMessage('tool_call', content, meta);
+      case 'data':
+        const innerData = d.data || {};
+        if (innerData.name === 'tool_call') {
+          if (innerData.tool === 'request_confirmation') {
+            const content = (innerData.arguments || {}).description || 'Proceed?';
+            await appendMessage(sessionId, 'confirm', content, { id: innerData.id });
+            if (isCurrent) renderMessage('confirm', content, { id: innerData.id });
+          } else {
+            const content = `${innerData.tool}(${JSON.stringify(innerData.arguments || {})})`;
+            const meta = { id: innerData.id, name: innerData.tool, arguments: innerData.arguments || {} };
+            await appendMessage(sessionId, 'tool_call', content, meta);
+            if (isCurrent) renderMessage('tool_call', content, meta);
+          }
+        } else if (innerData.name === 'tool_result') {
+          const resultContent = formatResult(innerData.result, innerData.error);
+          const resultMeta = { id: innerData.id, name: innerData.tool };
+          await appendMessage(sessionId, 'tool_result', resultContent, resultMeta);
+          if (isCurrent) renderMessage('tool_result', resultContent, resultMeta);
+        } else if (innerData.name === 'jobs') {
+          _jobTrees.set(sessionId, innerData.jobs || []);
+          if (isCurrent) renderJobTree(sessionId);
         }
         break;
-      case 'tool_result':
-        const resultContent = formatResult(p.result, p.error);
-        const resultMeta = { id: p.id, name: p.name };
-        await appendMessage(sessionId, 'tool_result', resultContent, resultMeta);
-        if (isCurrent) renderMessage('tool_result', resultContent, resultMeta);
-        break;
       case 'message':
-        await appendMessage(sessionId, 'message', p.content || '', {});
-        if (isCurrent) renderMessage('message', p.content || '', {});
+        await appendMessage(sessionId, 'message', d.content || '', {});
+        if (isCurrent) renderMessage('message', d.content || '', {});
         break;
       case 'error':
-        await appendMessage(sessionId, 'error', `[${p.code}] ${p.message}`, {});
-        if (isCurrent) renderMessage('error', `[${p.code}] ${p.message}`, {});
+        await appendMessage(sessionId, 'error', `[${d.code}] ${d.message}`, {});
+        if (isCurrent) renderMessage('error', `[${d.code}] ${d.message}`, {});
         break;
       case 'status':
         const state = _sessionStates.get(sessionId) || { status: '' };
-        state.status = p.status;
+        state.status = d.content;
         _sessionStates.set(sessionId, state);
 
-        // Update status bar before any await to avoid race with later events
         if (isCurrent) {
-          if (p.status === 'done') {
+          if (d.content === 'done') {
             $statusBar.textContent = '';
             $input.focus();
           } else {
-            $statusBar.textContent = p.status;
+            $statusBar.textContent = d.content;
           }
         }
 
-        if (p.content) {
-          await appendMessage(sessionId, 'thinking', p.content, {});
-          if (isCurrent) renderMessage('thinking', p.content, {});
+        if (d.data && d.data.content) {
+          await appendMessage(sessionId, 'thinking', d.data.content, {});
+          if (isCurrent) renderMessage('thinking', d.data.content, {});
         }
-        break;
-      case 'job_tree':
-        _jobTrees.set(sessionId, p.jobs || []);
-        if (isCurrent) renderJobTree(sessionId);
         break;
     }
 
