@@ -72,6 +72,20 @@ class ToolRegistry:
                     except Exception:
                         logger.error("Failed to instantiate tool %s.%s", module_path, attr_name, exc_info=True)
 
+    def register(self, tool: Tool | list[Tool]) -> None:
+        tools = tool if isinstance(tool, list) else [tool]
+        for t in tools:
+            self._tools[t.name] = t
+            logger.info("Tool registered: %s", t.name)
+    def unregister(self, name: str | list[str]) -> None:
+        """Remove tool(s) by name."""
+        names = [name] if isinstance(name, str) else name
+        for n in names:
+            if n in self._tools:
+                del self._tools[n]
+                logger.info("Tool unregistered: %s", n)
+
+
     def get(self, name: str) -> Tool | None:
         return self._tools.get(name)
 

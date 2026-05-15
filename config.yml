@@ -52,3 +52,5 @@ plugins:
   - subjob:
       max_depth: 2
   - logging
+  - mcp:
+      base_url: http://mcp:8001

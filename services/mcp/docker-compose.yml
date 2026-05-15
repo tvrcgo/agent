@@ -1,0 +1,19 @@
+name: agent-services
+
+services:
+  mcp:
+    build: .
+    container_name: mcp
+    environment:
+      - TZ=Asia/Shanghai
+    volumes:
+      - ./config.yml:/app/config.yml:ro
+      - ../../workspace:/workspace
+    networks:
+      - agent
+    restart: unless-stopped
+
+networks:
+  agent:
+    external: true
+    name: agent

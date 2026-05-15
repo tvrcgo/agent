@@ -3,24 +3,25 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 from agent.core.plugin import PluginRegistry
 from agent.core.skill import SkillRegistry
 from agent.core.tool import ToolRegistry
 from agent.core.model import ModelRegistry, ModelResponse, ToolCall
 
-logger = logging.getLogger(__name__)
+if TYPE_CHECKING:
+    from agent.core.tool import Tool
 
-from dataclasses import dataclass, field
-from typing import Any
+logger = logging.getLogger(__name__)
 
 
 @dataclass
 class MessageEvent:
-    type: str  # message, status, data
+    type: str
     content: str = ""
     data: dict = field(default_factory=dict)
+
 
 @dataclass
 class InputMessage:
@@ -67,7 +68,7 @@ class OutputMessage:
 class Job:
     id: str
     session_id: str
-    status: str  # pending | thinking | acting | waiting | done | error | cancelled
+    status: str
     input: InputMessage | None = None
     output: OutputMessage | None = None
     loop: LoopData | None = None
@@ -78,6 +79,7 @@ class Job:
 @dataclass
 class AgentContext:
     models: Any = None
+    tools: "ToolRegistry | None" = None
     _self: "AgentLoop | None" = field(default=None, repr=False)
 
     async def emit(self, hook_name: str, job: Job | None = None) -> None:
@@ -113,7 +115,7 @@ class AgentLoop:
     @property
     def ctx(self) -> AgentContext:
         if self._ctx is None:
-            self._ctx = AgentContext(models=self._models, _self=self)
+            self._ctx = AgentContext(models=self._models, tools=self._tools, _self=self)
         return self._ctx
 
     def _is_running(self, job_id: str) -> bool:
@@ -224,9 +226,7 @@ class AgentLoop:
                 logger.info("Starting queued job %s", next_job.id)
                 asyncio.create_task(self._handle_chat(next_job))
 
-    async def _execute_tool(
-        self, tool_call: ToolCall, job: Job
-    ) -> None:
+    async def _execute_tool(self, tool_call: ToolCall, job: Job) -> None:
         job.data["tool_call"] = tool_call
 
         if job.loop is not None:
