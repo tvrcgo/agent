@@ -33,7 +33,7 @@ MCP 作为插件，通过 HTTP 从 agent-mcp 服务同步工具。agent-mcp 运�
 ```yaml
 plugins:
   - mcp:
-      base_url: http://agent-mcp:8001
+      base_url: http://mcp:8001
 ```
 
 ### 工具
@@ -65,6 +65,7 @@ plugins:
 - 更新项目中的 `AGENTS.md`，主要概括重要机制和项目共识，帮助 AI 对项目有宏观理解；不要描述技术细节或罗列代码，AI 能从代码中读懂
 - 修改完成后等用户审查，不要直接 commmit 或 push remote
 - commit 前审查改动内容：有无泄密或安全风险、正确性风险和可维护性隐患
+- 更新项目的 `README.md`
 
 ## 代码风格
 
