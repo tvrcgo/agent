@@ -7,3 +7,9 @@ mcp:
     memory:
       command: npx
       args: ["-y", "@modelcontextprotocol/server-memory", "/workspace"]
+
+    # SSE transport example:
+    # remote-mcp:
+    #   url: https://example.com/sse
+    #   headers:
+    #     Authorization: Bearer xxx

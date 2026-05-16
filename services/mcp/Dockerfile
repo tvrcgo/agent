@@ -14,7 +14,7 @@ WORKDIR /app
 # Install Python dependencies
 COPY pyproject.toml ./
 RUN python3 -m venv /opt/venv && \
-    /opt/venv/bin/pip install --no-cache-dir fastapi uvicorn httpx pyyaml
+    /opt/venv/bin/pip install --no-cache-dir fastapi uvicorn httpx pyyaml aiohttp
 
 COPY mcp_server.py config.yml ./
 
