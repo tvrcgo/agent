@@ -36,6 +36,17 @@ plugins:
       base_url: http://mcp:8001
 ```
 
+### Queue Plugin
+Redis 队列插件，BLPOP 监听输入队列触发 `on_input`，`on_output` 时 RPUSH 到输出队列。连接失败自动重试，不阻塞 agent 启动。
+
+```yaml
+plugins:
+  - queue:
+      redis_url: redis://localhost:6379
+      input_queue: agent:input
+      output_queue: agent:output
+```
+
 ### 工具
 内置工具以目录形式存放在 `agent/tools/`，每个目录一个 `__init__.py` 导出 Tool 子类。`ToolRegistry.register` 支持单个和数组，`unregister` 支持按名移除。
 
