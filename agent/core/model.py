@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Callable, Coroutine
 
 import httpx
 
@@ -42,6 +42,12 @@ class ModelResponse:
     thinking: str | None = None
     tool_calls: list[ToolCall] | None = None
     usage: Usage | None = None
+
+
+@dataclass
+class StreamChunk:
+    text: str = ""
+    thinking: str = ""
 
 
 class ModelProvider:
@@ -88,6 +94,114 @@ class ModelProvider:
             raise
 
         return self._parse_response(resp.json())
+
+    async def chat_stream(
+        self,
+        messages: list[Message],
+        tools: list[dict[str, Any]] | None = None,
+        on_chunk: Callable[[StreamChunk], Coroutine[Any, Any, None]] | None = None,
+    ) -> ModelResponse:
+        payload: dict[str, Any] = {
+            "model": self._model_name,
+            "messages": self._format_messages(messages),
+            "stream": True,
+        }
+
+        if tools:
+            payload["tools"] = self._format_tools(tools)
+
+        response = ModelResponse()
+        tool_calls_map: dict[str, dict[str, Any]] = {}
+        tool_calls_order: list[str] = []
+
+        try:
+            async with self._http.stream("POST", "/chat/completions", json=payload) as resp:
+                resp.raise_for_status()
+                async for line in resp.aiter_lines():
+                    if not line or line == "data: [DONE]":
+                        continue
+                    if not line.startswith("data:"):
+                        continue
+                    data = line[5:].strip()
+                    if not data:
+                        continue
+                    chunk = self._parse_stream_chunk(data)
+                    if chunk:
+                        if chunk.text:
+                            response.text = (response.text or "") + chunk.text
+                        if chunk.thinking:
+                            response.thinking = (response.thinking or "") + chunk.thinking
+                        if on_chunk:
+                            await on_chunk(chunk)
+                    try:
+                        obj = json.loads(data)
+                        choices = obj.get("choices", [])
+                        if choices:
+                            delta = choices[0].get("delta", {})
+                            if "tool_calls" in delta:
+                                for tc in delta["tool_calls"]:
+                                    idx = tc.get("index", 0)
+                                    key = f"idx_{idx}"
+                                    tc_id = tc.get("id")
+                                    if key not in tool_calls_map:
+                                        tool_calls_map[key] = {"id": tc_id or key, "function": {"name": "", "arguments": ""}}
+                                        tool_calls_order.append(key)
+                                    if tc_id:
+                                        tool_calls_map[key]["id"] = tc_id
+                                    fn = tc.get("function", {})
+                                    if fn:
+                                        if "name" in fn:
+                                            tool_calls_map[key]["function"]["name"] += fn["name"]
+                                        if "arguments" in fn:
+                                            tool_calls_map[key]["function"]["arguments"] += fn["arguments"]
+                    except json.JSONDecodeError:
+                        pass
+        except httpx.HTTPStatusError as e:
+            body = e.response.text[:500] if e.response else ""
+            logger.error("Model HTTP %s: %s", e.response.status_code, body)
+            raise
+        except Exception:
+            logger.exception("Model stream request failed")
+            raise
+
+        if tool_calls_map:
+            response.tool_calls = []
+            for tc_id in tool_calls_order:
+                tc_data = tool_calls_map[tc_id]
+                args_str = tc_data["function"]["arguments"]
+                try:
+                    args = json.loads(args_str) if args_str else {}
+                except json.JSONDecodeError:
+                    args = {}
+                response.tool_calls.append(ToolCall(
+                    id=tc_data["id"],
+                    name=tc_data["function"]["name"],
+                    arguments=args,
+                ))
+
+        return response
+
+    def _parse_stream_chunk(self, data: str) -> StreamChunk | None:
+        try:
+            obj = json.loads(data)
+        except json.JSONDecodeError:
+            return None
+
+        choices = obj.get("choices", [])
+        if not choices:
+            return None
+
+        delta = choices[0].get("delta", {})
+        chunk = StreamChunk()
+
+        if "content" in delta and delta["content"]:
+            chunk.text = delta["content"]
+        if "reasoning_content" in delta and delta["reasoning_content"]:
+            chunk.thinking = delta["reasoning_content"]
+
+        if chunk.text or chunk.thinking:
+            return chunk
+        return None
 
     def _format_messages(self, messages: list[Message]) -> list[dict[str, Any]]:
         formatted: list[dict[str, Any]] = []

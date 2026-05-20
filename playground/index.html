@@ -876,6 +876,9 @@ function setConnected(connected) {
 function selectSession(sessionId) {
   if (currentSessionId === sessionId) return;
 
+  // Reset streaming element when switching sessions
+  _streamingEl = null;
+
   // Keep old connection alive — don't disconnect
   currentSessionId = sessionId;
 
@@ -921,6 +924,7 @@ async function createNewSession() {
 const _connections = new Map();           // sessionId -> WebSocket
 const _sessionStates = new Map();         // sessionId -> { status: string }
 const _jobTrees = new Map();              // sessionId -> jobs[]
+let _streamingEl = null;                  // current streaming message element
 
 function ensureConnection(sessionId) {
   if (_connections.has(sessionId)) return;
@@ -988,6 +992,19 @@ function ensureConnection(sessionId) {
         await appendMessage(sessionId, 'message', d.content || '', {});
         if (isCurrent) renderMessage('message', d.content || '', {});
         break;
+      case 'stream':
+        if (isCurrent) {
+          if (!_streamingEl) {
+            _streamingEl = document.createElement('div');
+            _streamingEl.className = 'event message';
+            _streamingEl.innerHTML = '<span class="label">message</span><div class="body"></div>';
+            $messageArea.insertBefore(_streamingEl, $statusBar);
+          }
+          const body = _streamingEl.querySelector('.body');
+          if (body) body.textContent += d.content || '';
+          $messageArea.scrollTop = $messageArea.scrollHeight;
+        }
+        break;
       case 'error':
         await appendMessage(sessionId, 'error', `[${d.code}] ${d.message}`, {});
         if (isCurrent) renderMessage('error', `[${d.code}] ${d.message}`, {});
@@ -1003,6 +1020,10 @@ function ensureConnection(sessionId) {
             $input.focus();
           } else {
             $statusBar.textContent = d.content;
+          }
+          // Reset streaming element when new round starts
+          if (d.content === 'thinking') {
+            _streamingEl = null;
           }
         }
 

@@ -39,8 +39,7 @@ async def main() -> None:
         tools=tools,
         skills=skills,
         plugins=plugins,
-        max_iterations=config.agent.max_iterations,
-        max_concurrent=config.agent.max_concurrent_sessions,
+        config=config.agent,
     )
 
     await loop.start()

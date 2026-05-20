@@ -5,10 +5,12 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, TYPE_CHECKING
 
+from agent.core.config import AgentConfig
+
 from agent.core.plugin import PluginRegistry
 from agent.core.skill import SkillRegistry
 from agent.core.tool import ToolRegistry
-from agent.core.model import ModelRegistry, ModelResponse, ToolCall
+from agent.core.model import ModelRegistry, ModelResponse, StreamChunk, ToolCall
 
 if TYPE_CHECKING:
     from agent.core.tool import Tool
@@ -80,6 +82,7 @@ class Job:
 class AgentContext:
     models: Any = None
     tools: "ToolRegistry | None" = None
+    config: Any = None
     _self: "AgentLoop | None" = field(default=None, repr=False)
 
     async def emit(self, hook_name: str, job: Job | None = None) -> None:
@@ -95,15 +98,13 @@ class AgentLoop:
         tools: ToolRegistry,
         skills: SkillRegistry,
         plugins: PluginRegistry,
-        max_iterations: int = 100,
-        max_concurrent: int = 10,
+        config: AgentConfig = AgentConfig(),
     ) -> None:
         self._models = models
         self._tools = tools
         self._skills = skills
         self._plugins = plugins
-        self._max_iterations = max_iterations
-        self._max_concurrent = max_concurrent
+        self._config = config
         self._jobs: dict[str, Job] = {}
         self._queue_jobs: list[Job] = []
         self._ctx: AgentContext | None = None
@@ -115,7 +116,7 @@ class AgentLoop:
     @property
     def ctx(self) -> AgentContext:
         if self._ctx is None:
-            self._ctx = AgentContext(models=self._models, tools=self._tools, _self=self)
+            self._ctx = AgentContext(models=self._models, tools=self._tools, config=self._config, _self=self)
         return self._ctx
 
     def _is_running(self, job_id: str) -> bool:
@@ -139,9 +140,9 @@ class AgentLoop:
             return
 
         active = sum(1 for j in self._jobs.values() if j._task is not None and not j._task.done())
-        if active >= self._max_concurrent:
+        if active >= self._config.max_concurrent:
             self._queue_jobs.append(job)
-            logger.info("Job %s queued (active: %d, max: %d)", job.id, active, self._max_concurrent)
+            logger.info("Job %s queued (active: %d, max: %d)", job.id, active, self._config.max_concurrent)
             return
 
         job.output = OutputMessage(session_id=job.session_id)
@@ -157,7 +158,7 @@ class AgentLoop:
         ctx = self.ctx
 
         try:
-            for _ in range(self._max_iterations):
+            for _ in range(self._config.max_iterations):
 
                 job.loop = LoopData(
                     queue_messages=self._queue_messages.pop(job.id, None) or [],
@@ -169,10 +170,23 @@ class AgentLoop:
 
                 messages = job.data.get("messages", [])
                 tools = self._tools.get_defs()
-                response: ModelResponse = await self._models.get("main").chat(
-                    messages=messages,
-                    tools=tools if tools else None,
-                )
+
+                if self._config.stream:
+                    async def on_chunk(chunk: StreamChunk) -> None:
+                        if chunk.text and job.output is not None:
+                            job.output.events.append(MessageEvent(type="stream", content=chunk.text))
+                            await ctx.emit("on_output", job)
+
+                    response: ModelResponse = await self._models.get("main").chat_stream(
+                        messages=messages,
+                        tools=tools if tools else None,
+                        on_chunk=on_chunk,
+                    )
+                else:
+                    response: ModelResponse = await self._models.get("main").chat(
+                        messages=messages,
+                        tools=tools if tools else None,
+                    )
                 job.data["response"] = response
                 await ctx.emit("after_llm", job)
 
@@ -205,7 +219,7 @@ class AgentLoop:
                 await ctx.emit("after_job", job)
                 return
 
-            msg = f"Reached maximum iterations ({self._max_iterations})"
+            msg = f"Reached maximum iterations ({self._config.max_iterations})"
             logger.warning(msg)
             job.data["error"] = msg
             job.status = "error"

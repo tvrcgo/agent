@@ -52,7 +52,7 @@ model:
     flash: deepseek:v4-flash
 
 agent:
-  max_concurrent_sessions: 10
+  max_concurrent: 10
   max_iterations: 100
 
 tools:

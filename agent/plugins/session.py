@@ -413,7 +413,8 @@ class SessionPlugin(Plugin):
         if job.id != job.session_id:
             return
 
-        if job.output.content:
+        # Skip message event when streaming (content already sent via StreamEvent)
+        if job.output.content and not ctx.config.stream:
             job.output.events.append(MessageEvent(type="message", content=job.output.content))
 
         if job.status == "error":
