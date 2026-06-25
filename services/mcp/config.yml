@@ -7,6 +7,9 @@ mcp:
     memory:
       command: npx
       args: ["-y", "@modelcontextprotocol/server-memory", "/workspace"]
+    bing-cn:
+      command: npx
+      args: ["-y", "bing-cn-mcp-enhanced"]
 
     # SSE transport example:
     # remote-mcp:
