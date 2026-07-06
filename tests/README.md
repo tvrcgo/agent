@@ -3,7 +3,7 @@
 ## 测试用例
 
 - [单元测试 — SessionPlugin](cases/unit-session.md)
-- [单元测试 — confirm / workspace](cases/unit-plugins.md)
+- [单元测试 — ConfirmPlugin](cases/unit-plugins.md)
 - [单元测试 — MCP](cases/unit-mcp.md)
 - [集成测试 — WebSocket 协议](cases/integration-ws.md)
 

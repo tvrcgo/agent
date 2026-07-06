@@ -69,7 +69,6 @@ plugins:
       max_tokens: 128000
       compress_threshold: 0.9
       system_prompt_path: agent/AGENTS.md
-  - workspace
   - subjob:
       max_depth: 2
   - logging

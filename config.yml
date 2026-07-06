@@ -49,7 +49,7 @@ plugins:
       compress_threshold: 0.9
       compress_keep_recent: 5
       system_prompt_path: agent/AGENTS.md
-  - workspace
+
   - subjob:
       max_depth: 2
   - logging
