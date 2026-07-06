@@ -24,6 +24,8 @@ services:
       - TZ=Asia/Shanghai
     volumes:
       - ./playground:/app:ro
+    networks:
+      - agent
     working_dir: /app
     command: python -m http.server 8766
     restart: unless-stopped
