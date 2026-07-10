@@ -25,9 +25,14 @@ model:
 agent:
   max_concurrent: 10
   max_iterations: 100
-  stream: false
+  stream: true
 
 tools:
+  - read_file
+  - write_file
+  - edit_file
+  - glob
+  - grep
   - subjob
   - websearch:
       search_url: http://searxng:8080

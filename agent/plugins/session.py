@@ -69,6 +69,11 @@ class SessionPlugin(Plugin):
         content = job.input.content
         if not content:
             return
+
+        workspace = Path("./workspace") / job.session_id
+        workspace.mkdir(parents=True, exist_ok=True)
+        ctx.data["work_dir"] = str(workspace.absolute())
+
         # Each job writes to its own storage (job.id)
         # Sub-jobs get empty context, only their own input message
         state = self._get_or_load(job.id)
