@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import uuid
 from typing import TYPE_CHECKING
 
 from agent.core.plugin import Plugin, PluginRegistry
 from agent.core.loop import AgentContext, Job, MessageEvent
+
+logger = logging.getLogger(__name__)
 
 
 class ConfirmPlugin(Plugin):
@@ -14,8 +17,11 @@ class ConfirmPlugin(Plugin):
 
     def __init__(self) -> None:
         self._pending: dict[str, tuple[asyncio.Event, str]] = {}
+        self._timeout: float = 120
 
     def load(self, registry: PluginRegistry, config: dict = {}) -> None:
+        self._timeout = float(config.get("confirm_timeout", 120))
+
         registry.on("before_tool", self._on_before_tool)
         registry.on("request_confirm", self._on_request_confirm)
         registry.on("command:confirm", self._on_command_confirm)
@@ -30,11 +36,17 @@ class ConfirmPlugin(Plugin):
         event = asyncio.Event()
         self._pending[tool_call.id] = (event, "")
 
-        await event.wait()
-        _, decision = self._pending.pop(tool_call.id, (None, "deny"))
-
-        if decision == "deny":
-            job.data["result"] = "Operation cancelled by user."
+        try:
+            await asyncio.wait_for(event.wait(), timeout=self._timeout)
+        except asyncio.TimeoutError:
+            logger.warning("Confirmation timed out after %ss for %s", self._timeout, tool_call.id)
+            job.data["result"] = "Operation cancelled: confirmation timed out."
+        else:
+            _, decision = self._pending.pop(tool_call.id, (None, "deny"))
+            if decision == "deny":
+                job.data["result"] = "Operation cancelled by user."
+        finally:
+            self._pending.pop(tool_call.id, None)
 
     async def _on_request_confirm(self, ctx: AgentContext, job: Job | None) -> None:
         if job is None:
@@ -58,11 +70,18 @@ class ConfirmPlugin(Plugin):
         event = asyncio.Event()
         self._pending[confirm_id] = (event, "")
 
-        await event.wait()
-        _, decision = self._pending.pop(confirm_id, (None, "deny"))
-        ctx.data["confirm_decision"] = decision
-        ctx.data.pop("confirm_id", None)
-        ctx.data.pop("confirm_description", None)
+        try:
+            await asyncio.wait_for(event.wait(), timeout=self._timeout)
+        except asyncio.TimeoutError:
+            logger.warning("Confirmation timed out after %ss for %s", self._timeout, confirm_id)
+            ctx.data["confirm_decision"] = "deny"
+        else:
+            _, decision = self._pending.pop(confirm_id, (None, "deny"))
+            ctx.data["confirm_decision"] = decision
+        finally:
+            self._pending.pop(confirm_id, None)
+            ctx.data.pop("confirm_id", None)
+            ctx.data.pop("confirm_description", None)
 
     async def _on_command_confirm(self, ctx: AgentContext, job: Job | None) -> None:
         if job is None:
