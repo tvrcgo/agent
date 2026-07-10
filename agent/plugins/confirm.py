@@ -1,16 +1,11 @@
 from __future__ import annotations
 
 import asyncio
-import logging
+import uuid
 from typing import TYPE_CHECKING
 
 from agent.core.plugin import Plugin, PluginRegistry
 from agent.core.loop import AgentContext, Job, MessageEvent
-
-if TYPE_CHECKING:
-    pass
-
-logger = logging.getLogger(__name__)
 
 
 class ConfirmPlugin(Plugin):
@@ -46,9 +41,19 @@ class ConfirmPlugin(Plugin):
             return
         confirm_id = ctx.data.get("confirm_id", "")
         if not confirm_id:
-            logger.warning("request_confirm emitted without confirm_id")
-            ctx.data["confirm_decision"] = "deny"
-            return
+            confirm_id = str(uuid.uuid4())[:8]
+            ctx.data["confirm_id"] = confirm_id
+
+        description = ctx.data.get("confirm_description", "")
+
+        if job.output is not None:
+            job.output.events.append(
+                MessageEvent(
+                    type="confirm_request",
+                    data={"id": confirm_id, "description": description},
+                )
+            )
+            await ctx.emit("on_output", job)
 
         event = asyncio.Event()
         self._pending[confirm_id] = (event, "")
@@ -56,6 +61,8 @@ class ConfirmPlugin(Plugin):
         await event.wait()
         _, decision = self._pending.pop(confirm_id, (None, "deny"))
         ctx.data["confirm_decision"] = decision
+        ctx.data.pop("confirm_id", None)
+        ctx.data.pop("confirm_description", None)
 
     async def _on_command_confirm(self, ctx: AgentContext, job: Job | None) -> None:
         if job is None:
