@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import logging
+import uuid
 from pathlib import Path
 from typing import Any, TYPE_CHECKING
 
 from agent.core.tool import Tool
+from agent.core.loop import MessageEvent
 
 if TYPE_CHECKING:
     from agent.core.loop import AgentContext, Job
@@ -66,6 +68,28 @@ def _sanitize_path(file_path: str, work_dir: Path, force: bool = False) -> Path:
     return path
 
 
+async def _request_confirm(ctx: AgentContext, job: Job, description: str) -> bool:
+    confirm_id = str(uuid.uuid4())[:8]
+    ctx.data["confirm_id"] = confirm_id
+    ctx.data["confirm_description"] = description
+
+    if job.output is not None:
+        job.output.events.append(
+            MessageEvent(
+                type="confirm_request",
+                data={"id": confirm_id, "description": description},
+            )
+        )
+        await ctx.emit("on_output", job)
+
+    await ctx.emit("request_confirm", job)
+
+    ctx.data.pop("confirm_id", None)
+    ctx.data.pop("confirm_description", None)
+    decision = ctx.data.pop("confirm_decision", "deny")
+    return decision == "approve"
+
+
 class GlobTool(Tool):
     name = "glob"
     description = (
@@ -103,7 +127,19 @@ class GlobTool(Tool):
         work_dir = _resolve_work_dir(ctx, arguments, self.config)
 
         if search_path:
-            base = _sanitize_path(search_path, work_dir, force=force)
+            if force:
+                base = _sanitize_path(search_path, work_dir, force=True)
+            else:
+                try:
+                    base = _sanitize_path(search_path, work_dir)
+                except PermissionError as e:
+                    if "retry with force=true" in str(e):
+                        if await _request_confirm(ctx, job, f"Search outside work_dir: {search_path}"):
+                            base = _sanitize_path(search_path, work_dir, force=True)
+                        else:
+                            return "Operation cancelled by user."
+                    else:
+                        raise
         else:
             base = work_dir
 

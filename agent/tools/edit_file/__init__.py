@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import logging
+import uuid
 from pathlib import Path
 from typing import Any, TYPE_CHECKING
 
 from agent.core.tool import Tool
+from agent.core.loop import MessageEvent
 
 if TYPE_CHECKING:
     from agent.core.loop import AgentContext, Job
@@ -90,6 +92,28 @@ def _check_write_size(content: str, max_size: int | None = None) -> int:
     return size
 
 
+async def _request_confirm(ctx: AgentContext, job: Job, description: str) -> bool:
+    confirm_id = str(uuid.uuid4())[:8]
+    ctx.data["confirm_id"] = confirm_id
+    ctx.data["confirm_description"] = description
+
+    if job.output is not None:
+        job.output.events.append(
+            MessageEvent(
+                type="confirm_request",
+                data={"id": confirm_id, "description": description},
+            )
+        )
+        await ctx.emit("on_output", job)
+
+    await ctx.emit("request_confirm", job)
+
+    ctx.data.pop("confirm_id", None)
+    ctx.data.pop("confirm_description", None)
+    decision = ctx.data.pop("confirm_decision", "deny")
+    return decision == "approve"
+
+
 class EditFileTool(Tool):
     name = "edit_file"
     description = (
@@ -144,7 +168,21 @@ class EditFileTool(Tool):
             return "Error: old_string must not be empty"
 
         work_dir = _resolve_work_dir(ctx, arguments, self.config)
-        path = _sanitize_path(file_path, work_dir, force=force)
+
+        if force:
+            path = _sanitize_path(file_path, work_dir, force=True)
+        else:
+            try:
+                path = _sanitize_path(file_path, work_dir)
+            except PermissionError as e:
+                if "retry with force=true" in str(e):
+                    if await _request_confirm(ctx, job, f"Edit file outside work_dir: {file_path}"):
+                        path = _sanitize_path(file_path, work_dir, force=True)
+                    else:
+                        return "Operation cancelled by user."
+                else:
+                    raise
+
         _check_read_size(path)
 
         try:
