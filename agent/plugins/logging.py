@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import logging
 
-from agent.core.plugin import Plugin, PluginRegistry
-from agent.core.loop import AgentContext, Job
+from agent.core.plugin import Plugin
+from agent.core.loop import AgentContext
+from agent.core.events import Event
 
 
 logger = logging.getLogger(__name__)
@@ -24,15 +25,15 @@ class LoggingPlugin(Plugin):
     def __init__(self) -> None:
         self._iteration_counts: dict[str, int] = {}
 
-    def load(self, registry: PluginRegistry, config: dict = {}) -> None:
-        registry.on("before_job", self._on_before_job)
-        registry.on("before_llm", self._on_before_llm)
-        registry.on("after_llm", self._on_after_llm)
-        registry.on("before_tool", self._on_before_tool)
-        registry.on("after_tool", self._on_after_tool)
-        registry.on("after_job", self._on_after_job)
-        registry.on("on_error", self._on_error)
-        registry.on("on_complete", self._on_complete)
+    def load(self, ctx: AgentContext, config: dict = {}) -> None:
+        ctx.on("before_job", self._on_before_job)
+        ctx.on("before_llm", self._on_before_llm)
+        ctx.on("after_llm", self._on_after_llm)
+        ctx.on("before_tool", self._on_before_tool)
+        ctx.on("after_tool", self._on_after_tool)
+        ctx.on("after_job", self._on_after_job)
+        ctx.on("job_error", self._on_error)
+        ctx.on("job_complete", self._on_complete)
 
         logger.info("LoggingPlugin initialized")
 
@@ -40,7 +41,8 @@ class LoggingPlugin(Plugin):
         self._iteration_counts.clear()
         logger.info("LoggingPlugin shut down")
 
-    async def _on_before_job(self, ctx: AgentContext, job: Job | None) -> None:
+    async def _on_before_job(self, ctx: AgentContext, evt: Event) -> None:
+        job = evt.job
         if job is None:
             return
         jid = job.id
@@ -50,7 +52,8 @@ class LoggingPlugin(Plugin):
             logger.info("[%s] job start", jid)
             self._iteration_counts[jid] = 0
 
-    async def _on_before_llm(self, ctx: AgentContext, job: Job | None) -> None:
+    async def _on_before_llm(self, ctx: AgentContext, evt: Event) -> None:
+        job = evt.job
         if job is None:
             return
         jid = job.id
@@ -74,11 +77,12 @@ class LoggingPlugin(Plugin):
             logger.info("[%s] Round %d >>> (no user message, %d messages total)",
                         jid, self._iteration_counts[jid], len(messages))
 
-    async def _on_after_llm(self, ctx: AgentContext, job: Job | None) -> None:
+    async def _on_after_llm(self, ctx: AgentContext, evt: Event) -> None:
+        job = evt.job
         if job is None:
             return
         jid = job.id
-        response = job.data.get("response")
+        response = evt.response
         if response is None:
             return
 
@@ -93,38 +97,43 @@ class LoggingPlugin(Plugin):
         if response.text:
             logger.info("[%s] reply message: %s", jid, _truncate(response.text))
 
-    async def _on_before_tool(self, ctx: AgentContext, job: Job | None) -> None:
+    async def _on_before_tool(self, ctx: AgentContext, evt: Event) -> None:
+        job = evt.job
         if job is None:
             return
         jid = job.id
-        tool_call = job.data.get("tool_call")
+        tool_call = evt.tool_call
         if tool_call:
             logger.info("[%s] tool-call: %s (%s)", jid, tool_call.name, tool_call.arguments)
 
-    async def _on_after_tool(self, ctx: AgentContext, job: Job | None) -> None:
+    async def _on_after_tool(self, ctx: AgentContext, evt: Event) -> None:
+        job = evt.job
         if job is None:
             return
         jid = job.id
-        tool_call = job.data.get("tool_call")
-        result = job.data.get("result", "")
+        tool_call = evt.tool_call
+        result = evt.data.get("result", "")
         if tool_call:
             logger.info("[%s] tool-result: %s", jid, _truncate(result))
 
-    async def _on_after_job(self, ctx: AgentContext, job: Job | None) -> None:
+    async def _on_after_job(self, ctx: AgentContext, evt: Event) -> None:
+        job = evt.job
         if job is None:
             return
         jid = job.id
-        reason = job.data.get("reason", "unknown")
+        reason = evt.data.get("reason", "unknown")
         logger.info("[%s] job finished: %s", jid, reason)
 
-    async def _on_error(self, ctx: AgentContext, job: Job | None) -> None:
+    async def _on_error(self, ctx: AgentContext, evt: Event) -> None:
+        job = evt.job
         if job is None:
             return
         jid = job.id
-        error = job.data.get("error")
+        error = evt.data.get("error")
         logger.error("[%s] job error: %s", jid, error)
 
-    async def _on_complete(self, ctx: AgentContext, job: Job | None) -> None:
+    async def _on_complete(self, ctx: AgentContext, evt: Event) -> None:
+        job = evt.job
         if job is None:
             return
         jid = job.id

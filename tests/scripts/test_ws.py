@@ -170,7 +170,7 @@ async def test_tool_call_protocol():
 
 
 async def test_command_routing():
-    """CommandMessage routes to command:<action> hook."""
+    """CommandMessage routes to cmd_<action> hook."""
     print("\n=== Scenario 7: Command Routing ===")
     async with _connect(f"{WS_URL}?session_id=test-cmd-{uuid.uuid4().hex[:6]}") as ws:
         await ws.send(_command("compress"))

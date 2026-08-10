@@ -2,13 +2,13 @@
 
 ## ConfirmPlugin
 
-- [ ] `register` 注册 `before_tool` 和 `command:confirm` 两个钩子
+- [ ] `load(ctx, config)` 注册 `before_tool`、`request_confirm`、`cmd_confirm` 三个事件
 - [ ] `_on_before_tool`：非 `request_confirmation` 工具调用直接放过
-- [ ] `_on_before_tool`：匹配时 emit `StatusEvent(status="waiting")` 并等待
-- [ ] `_on_command_confirm`：收到 deny → `job.data["abort"] = True`
-- [ ] `_on_command_confirm`：收到 approve → 正常继续
+- [ ] `_on_before_tool`：匹配时阻塞等待 `cmd_confirm` 唤醒
+- [ ] `_on_request_confirm`：向 `job.output` 追加 `confirm_request` 事件并等待决策，结果回填 `event.data["confirm_decision"]`
+- [ ] `cmd_confirm` deny → `_on_before_tool` 在 `event.data` 写 `abort=True` + 取消消息，工具跳过执行
+- [ ] `cmd_confirm` approve → 正常继续执行工具
 - [ ] 超时未响应 → 默认 deny
-
 
 ---
 

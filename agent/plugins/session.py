@@ -7,8 +7,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from agent.core.plugin import Plugin, PluginRegistry
+from agent.core.plugin import Plugin
 from agent.core.loop import AgentContext, Job, MessageEvent
+from agent.core.events import Event
 from agent.core.model import AssistantMessage, SystemMessage, ToolResult, UserMessage, ToolCall
 
 
@@ -35,15 +36,16 @@ class SessionPlugin(Plugin):
         self._compress_threshold: float = 0.9
         self._compress_keep_recent: int = 10
 
-    def load(self, registry: PluginRegistry, config: dict = {}) -> None:
-        registry.on("before_job", self._on_before_job)
-        registry.on("before_llm", self._on_before_llm)
-        registry.on("after_llm", self._on_after_llm)
-        registry.on("before_tool", self._on_before_tool)
-        registry.on("before_tools", self._on_before_tools)
-        registry.on("after_tool", self._on_after_tool)
-        registry.on("after_job", self._on_after_job)
-        registry.on("command:compress", self._on_compress)
+    def load(self, ctx: AgentContext, config: dict = {}) -> None:
+        ctx.on("before_job", self._on_before_job)
+        ctx.on("before_llm", self._on_before_llm)
+        ctx.on("after_llm", self._on_after_llm)
+        ctx.on("before_tool", self._on_before_tool)
+        ctx.on("before_tools", self._on_before_tools)
+        ctx.on("after_tool", self._on_after_tool)
+        ctx.on("after_job", self._on_after_job)
+        ctx.on("job_error", self._on_job_error)
+        ctx.on("cmd_compress", self._on_compress)
 
         self._max_load_messages = config.get('max_load_messages', 100)
         self._max_tokens = config.get('max_tokens', 65536)
@@ -63,7 +65,8 @@ class SessionPlugin(Plugin):
         self._sessions.clear()
         logger.info("SessionPlugin shut down")
 
-    async def _on_before_job(self, ctx: AgentContext, job: Job | None) -> None:
+    async def _on_before_job(self, ctx: AgentContext, evt: Event) -> None:
+        job = evt.job
         if job is None or job.input is None:
             return
         content = job.input.content
@@ -72,7 +75,7 @@ class SessionPlugin(Plugin):
 
         workspace = Path("./workspace") / job.session_id
         workspace.mkdir(parents=True, exist_ok=True)
-        ctx.data["work_dir"] = str(workspace.absolute())
+        job.data["work_dir"] = str(workspace.absolute())
 
         # Each job writes to its own storage (job.id)
         # Sub-jobs get empty context, only their own input message
@@ -80,14 +83,15 @@ class SessionPlugin(Plugin):
         state.messages.append(UserMessage(content=content))
         self._append(job.id, {"role": "user", "content": content})
 
-    async def _on_before_llm(self, ctx: AgentContext, job: Job | None) -> None:
+    async def _on_before_llm(self, ctx: AgentContext, evt: Event) -> None:
+        job = evt.job
         if job is None or job.output is None:
             return
 
         # Only send status from root job
         if job.id == job.session_id:
             job.output.events.append(MessageEvent(type="status", content="thinking"))
-            await ctx.emit("on_output", job)
+            await ctx.emit("msg_output", job=job)
 
         state = self._get_or_load(job.id)
 
@@ -102,8 +106,8 @@ class SessionPlugin(Plugin):
             await self._compress(ctx, state, job)
 
         # Only root job consumes queued messages
-        if job.id == job.session_id and job.loop and job.loop.queue_messages:
-            for content in job.loop.queue_messages:
+        if job.id == job.session_id and job.loop and job.loop.steering_messages:
+            for content in job.loop.steering_messages:
                 state.messages.append(UserMessage(content=content))
                 self._append(job.id, {"role": "user", "content": content})
 
@@ -116,17 +120,18 @@ class SessionPlugin(Plugin):
 
         job.data["messages"] = msgs
 
-    async def _on_after_llm(self, ctx: AgentContext, job: Job | None) -> None:
+    async def _on_after_llm(self, ctx: AgentContext, evt: Event) -> None:
+        job = evt.job
         if job is None:
             return
-        response = job.data.get("response")
+        response = evt.response
         if response is None:
             return
 
         # Only emit thinking content from root job
         if response.thinking and job.output is not None and job.id == job.session_id:
             job.output.events.append(MessageEvent(type="status", content="thinking", data={"content": response.thinking}))
-            await ctx.emit("on_output", job)
+            await ctx.emit("msg_output", job=job)
 
         state = self._get_or_load(job.id)
         state.messages.append(AssistantMessage(
@@ -139,13 +144,14 @@ class SessionPlugin(Plugin):
         self._append(job.id, self._response_to_dict(response))
 
 
-    async def _on_before_tool(self, ctx: AgentContext, job: Job | None) -> None:
+    async def _on_before_tool(self, ctx: AgentContext, evt: Event) -> None:
+        job = evt.job
         if job is None or job.output is None:
             return
         # Only send tool_call event from root job
         if job.id != job.session_id:
             return
-        tool_call = job.data.get("tool_call")
+        tool_call = evt.tool_call
         if tool_call:
             job.output.events.append(MessageEvent(type="data", data={
                 "name": "tool_call",
@@ -153,13 +159,15 @@ class SessionPlugin(Plugin):
                 "tool": tool_call.name,
                 "arguments": tool_call.arguments,
             }))
-            await ctx.emit("on_output", job)
+            await ctx.emit("msg_output", job=job)
 
-    async def _on_after_tool(self, ctx: AgentContext, job: Job | None) -> None:
+    async def _on_after_tool(self, ctx: AgentContext, evt: Event) -> None:
+        job = evt.job
         if job is None:
             return
-        tool_call = job.data.get("tool_call")
-        result = job.data.get("result", "")
+        tool_call = evt.tool_call
+        result = evt.data.get("result", "")
+        error = evt.data.get("error", "")
 
         # Only send tool_result event from root job
         if tool_call and job.output is not None and job.id == job.session_id:
@@ -168,9 +176,9 @@ class SessionPlugin(Plugin):
                 "id": tool_call.id,
                 "tool": tool_call.name,
                 "result": result,
-                "error": job.data.get("error", ""),
+                "error": error,
             }))
-            await ctx.emit("on_output", job)
+            await ctx.emit("msg_output", job=job)
 
         # Persist to session (for all jobs)
         if tool_call:
@@ -182,7 +190,8 @@ class SessionPlugin(Plugin):
                 "tool_call_id": tool_call.id,
             })
 
-    async def _on_compress(self, ctx: AgentContext, job: Job | None) -> None:
+    async def _on_compress(self, ctx: AgentContext, evt: Event) -> None:
+        job = evt.job
         if job is None:
             return
         state = self._get_or_load(job.id)
@@ -405,16 +414,18 @@ class SessionPlugin(Plugin):
         else:
             return UserMessage(content=d.get("content"))
 
-    async def _on_before_tools(self, ctx: AgentContext, job: Job | None) -> None:
+    async def _on_before_tools(self, ctx: AgentContext, evt: Event) -> None:
+        job = evt.job
         if job is None or job.output is None:
             return
         # Only send status from root job
         if job.id != job.session_id:
             return
         job.output.events.append(MessageEvent(type="status", content="acting"))
-        await ctx.emit("on_output", job)
+        await ctx.emit("msg_output", job=job)
 
-    async def _on_after_job(self, ctx: AgentContext, job: Job | None) -> None:
+    async def _on_after_job(self, ctx: AgentContext, evt: Event) -> None:
+        job = evt.job
         if job is None or job.output is None:
             return
 
@@ -427,10 +438,29 @@ class SessionPlugin(Plugin):
             job.output.events.append(MessageEvent(type="message", content=job.output.content))
 
         if job.status == "error":
-            job.output.events.append(MessageEvent(type="status", content="error", data={"reason": job.data.get("reason", "Unknown error")}))
+            reason = evt.data.get("reason", "")
+            if reason == "max_iterations":
+                reasons = {"reason": "Reached maximum iterations"}
+            else:
+                reasons = {"reason": "Unknown error"}
+            job.output.events.append(MessageEvent(type="status", content="error", data=reasons))
         elif job.status == "cancelled":
             job.output.events.append(MessageEvent(type="status", content="cancelled"))
         else:
             job.output.events.append(MessageEvent(type="status", content="done"))
 
-        await ctx.emit("on_output", job)
+        await ctx.emit("msg_output", job=job)
+
+    async def _on_job_error(self, ctx: AgentContext, evt: Event) -> None:
+        job = evt.job
+        if job is None or job.output is None:
+            return
+
+        # Only send error status from root job
+        if job.id != job.session_id:
+            return
+
+        error = evt.data.get("error")
+        reason = str(error) if error is not None else "Unknown error"
+        job.output.events.append(MessageEvent(type="status", content="error", data={"reason": reason}))
+        await ctx.emit("msg_output", job=job)

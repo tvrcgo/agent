@@ -5,8 +5,9 @@ import logging
 import uuid
 from typing import TYPE_CHECKING
 
-from agent.core.plugin import Plugin, PluginRegistry
+from agent.core.plugin import Plugin
 from agent.core.loop import AgentContext, Job, InputMessage, MessageEvent
+from agent.core.events import Event
 
 
 logger = logging.getLogger(__name__)
@@ -22,19 +23,20 @@ class SubJobPlugin(Plugin):
         self._depth: dict[str, int] = {}
         self._parent: dict[str, str] = {}
 
-    def load(self, registry: PluginRegistry, config: dict = {}) -> None:
-        registry.on("agent_start", self._on_agent_start)
-        registry.on("after_llm", self._send_jobs)
-        registry.on("after_tools", self._send_jobs)
-        registry.on("after_job", self._send_jobs)
-        registry.on("after_job", self._on_after_job)
+    def load(self, ctx: AgentContext, config: dict = {}) -> None:
+        ctx.on("agent_start", self._on_agent_start)
+        ctx.on("after_llm", self._send_jobs)
+        ctx.on("after_tools", self._send_jobs)
+        ctx.on("after_job", self._send_jobs)
+        ctx.on("after_job", self._on_after_job)
         self._max_sub_job_depth = config.get("max_depth", 2)
         logger.info("SubJobPlugin initialized, max_depth=%d", self._max_sub_job_depth)
 
-    async def _on_agent_start(self, ctx: AgentContext, job: Job | None) -> None:
+    async def _on_agent_start(self, ctx: AgentContext, evt: Event) -> None:
         ctx.subjob = self._create_subjob
 
-    async def _send_jobs(self, ctx: AgentContext, job: Job | None) -> None:
+    async def _send_jobs(self, ctx: AgentContext, evt: Event) -> None:
+        job = evt.job
         if job is None or ctx._self is None:
             return
         session_id = job.session_id
@@ -51,9 +53,10 @@ class SubJobPlugin(Plugin):
         ]
         if job.output is not None:
             job.output.events.append(MessageEvent(type="data", data={"name": "jobs", "jobs": jobs_data}))
-            await ctx.emit("on_output", job)
+            await ctx.emit("msg_output", job=job)
 
-    async def _on_after_job(self, ctx: AgentContext, job: Job | None) -> None:
+    async def _on_after_job(self, ctx: AgentContext, evt: Event) -> None:
+        job = evt.job
         if job is None:
             return
         future = self._pending.pop(job.id, None)
@@ -84,7 +87,7 @@ class SubJobPlugin(Plugin):
             input=InputMessage(content=content, session_id=parent_job.session_id),
         )
 
-        asyncio.create_task(ctx.emit("on_input", sub_job))
+        asyncio.create_task(ctx.emit("msg_input", job=sub_job))
         return future
 
     def unload(self) -> None:

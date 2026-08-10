@@ -7,8 +7,9 @@ from typing import Any, TYPE_CHECKING
 
 import httpx
 
-from agent.core.plugin import Plugin, PluginRegistry
+from agent.core.plugin import Plugin
 from agent.core.tool import Tool
+from agent.core.events import Event
 
 if TYPE_CHECKING:
     from agent.core.loop import AgentContext, Job
@@ -44,22 +45,22 @@ class MCPPlugin(Plugin):
         self._sync_task: asyncio.Task[None] | None = None
         self._ctx: AgentContext | None = None
 
-    def load(self, registry: PluginRegistry, config: dict[str, Any] = {}) -> None:
+    def load(self, ctx: "AgentContext", config: dict[str, Any] = {}) -> None:
         self._base_url = config.get("base_url", "http://localhost:8001").rstrip("/")
-        registry.on("agent_start", self._on_start)
-        registry.on("agent_stop", self._on_stop)
+        ctx.on("agent_start", self._on_start)
+        ctx.on("agent_stop", self._on_stop)
         logger.info("MCP plugin loaded, base_url=%s", self._base_url)
 
     def unload(self) -> None:
         self._tools.clear()
 
-    async def _on_start(self, ctx: "AgentContext", job: "Job | None") -> None:
+    async def _on_start(self, ctx: "AgentContext", evt: Event) -> None:
         self._ctx = ctx
         self._http = httpx.AsyncClient(base_url=self._base_url, timeout=60.0)
         self._sync_task = asyncio.create_task(self._sync_loop())
         logger.info("MCP plugin started")
 
-    async def _on_stop(self, ctx: "AgentContext", job: "Job | None") -> None:
+    async def _on_stop(self, ctx: "AgentContext", evt: Event) -> None:
         if self._sync_task:
             self._sync_task.cancel()
             try:

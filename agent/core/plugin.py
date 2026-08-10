@@ -3,22 +3,19 @@ from __future__ import annotations
 import importlib
 import logging
 from abc import ABC
-from collections import defaultdict
-from typing import Callable, Awaitable, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from agent.core.loop import AgentContext, Job
+    from agent.core.loop import AgentContext
 
 logger = logging.getLogger(__name__)
-
-PluginHandler = Callable[["AgentContext", "Job | None"], Awaitable[None]]
 
 
 class Plugin(ABC):
 
     name: str = ""
 
-    def load(self, registry: PluginRegistry, config: dict = {}) -> None:
+    def load(self, ctx: "AgentContext", config: dict = {}) -> None:
         pass
 
     def unload(self) -> None:
@@ -27,16 +24,9 @@ class Plugin(ABC):
 
 class PluginRegistry:
 
-    def __init__(self) -> None:
-        self._handlers: dict[str, list[PluginHandler]] = defaultdict(list)
+    def __init__(self, ctx: "AgentContext") -> None:
+        self._ctx = ctx
         self._plugins: dict[str, Plugin] = {}
-
-    def on(self, hook_name: str, handler: PluginHandler) -> None:
-        self._handlers[hook_name].append(handler)
-
-    async def emit(self, hook_name: str, ctx: AgentContext, job: Job | None) -> None:
-        for handler in self._handlers[hook_name]:
-            await handler(ctx, job)
 
     def load_modules(self, items: list[str | dict]) -> None:
         for item in items:
@@ -63,7 +53,7 @@ class PluginRegistry:
                     try:
                         plugin = attr()
                         self._plugins[plugin.name] = plugin
-                        plugin.load(self, config)
+                        plugin.load(self._ctx, config)
                         logger.info("Plugin registered: %s", plugin.name)
                     except Exception:
                         logger.error("Failed to instantiate plugin %s.%s", module_path, attr_name, exc_info=True)

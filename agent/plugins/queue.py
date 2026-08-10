@@ -9,8 +9,9 @@ from typing import Any
 
 import redis.asyncio as redis
 
-from agent.core.plugin import Plugin, PluginRegistry
+from agent.core.plugin import Plugin
 from agent.core.loop import AgentContext, InputMessage, Job, MessageEvent
+from agent.core.events import Event
 
 
 logger = logging.getLogger(__name__)
@@ -31,14 +32,14 @@ class QueuePlugin(Plugin):
         self._consume_task: asyncio.Task[None] | None = None
         self._ctx: AgentContext | None = None
 
-    def load(self, registry: PluginRegistry, config: dict[str, Any] = {}) -> None:
+    def load(self, ctx: AgentContext, config: dict[str, Any] = {}) -> None:
         self._redis_url = config.get("redis_url", "redis://localhost:6379")
         self._input_queue = config.get("input_queue", "agent:input")
         self._output_queue = config.get("output_queue", "agent:output")
 
-        registry.on("agent_start", self._on_start)
-        registry.on("agent_stop", self._on_stop)
-        registry.on("on_output", self._on_output)
+        ctx.on("agent_start", self._on_start)
+        ctx.on("agent_stop", self._on_stop)
+        ctx.on("msg_output", self._on_output)
 
         logger.info(
             "QueuePlugin loaded, redis_url=%s, input=%s, output=%s",
@@ -49,7 +50,7 @@ class QueuePlugin(Plugin):
         self._redis = None
         logger.info("QueuePlugin shut down")
 
-    async def _on_start(self, ctx: AgentContext, job: Job | None) -> None:
+    async def _on_start(self, ctx: AgentContext, evt: Event) -> None:
         self._ctx = ctx
         try:
             self._redis = redis.from_url(self._redis_url)
@@ -72,7 +73,7 @@ class QueuePlugin(Plugin):
                 logger.warning("Redis connection retry failed: %s", e)
                 await asyncio.sleep(RETRY_INTERVAL)
 
-    async def _on_stop(self, ctx: AgentContext, job: Job | None) -> None:
+    async def _on_stop(self, ctx: AgentContext, evt: Event) -> None:
         if self._consume_task:
             self._consume_task.cancel()
             try:
@@ -118,13 +119,14 @@ class QueuePlugin(Plugin):
                 status="pending",
                 input=input_msg,
             )
-            await self._ctx.emit("on_input", job)
+            await self._ctx.emit("msg_input", job=job)
         except json.JSONDecodeError as e:
             logger.warning("Failed to parse input message: %s", e)
         except Exception as e:
             logger.warning("Failed to handle input message: %s", e)
 
-    async def _on_output(self, ctx: AgentContext, job: Job | None) -> None:
+    async def _on_output(self, ctx: AgentContext, evt: Event) -> None:
+        job = evt.job
         if job is None or job.output is None or self._redis is None:
             return
 

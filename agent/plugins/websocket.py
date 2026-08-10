@@ -12,8 +12,9 @@ import websockets
 from websockets.asyncio.server import Server, ServerConnection
 from websockets.exceptions import ConnectionClosed
 
-from agent.core.plugin import Plugin, PluginRegistry
+from agent.core.plugin import Plugin
 from agent.core.loop import AgentContext, InputMessage, Job, MessageEvent
+from agent.core.events import Event
 
 
 logger = logging.getLogger(__name__)
@@ -104,13 +105,13 @@ class WebSocketPlugin(Plugin):
             logging.getLogger("websockets.server").addFilter(_SuppressHandshakeNoise())
             WebSocketPlugin._handshake_filter_added = True
 
-    def load(self, registry: PluginRegistry, config: dict = {}) -> None:
+    def load(self, ctx: AgentContext, config: dict = {}) -> None:
         self._host = config.get('host', '0.0.0.0')
         self._port = config.get('port', 8765)
 
-        registry.on("agent_start", self._on_agent_start)
-        registry.on("agent_stop", self._on_agent_stop)
-        registry.on("on_output", self._on_output)
+        ctx.on("agent_start", self._on_agent_start)
+        ctx.on("agent_stop", self._on_agent_stop)
+        ctx.on("msg_output", self._on_output)
 
         logger.info("WebSocketPlugin initialized, host=%s, port=%d", self._host, self._port)
 
@@ -121,11 +122,11 @@ class WebSocketPlugin(Plugin):
         self._sessions.clear()
         logger.info("WebSocketPlugin shut down")
 
-    async def _on_agent_start(self, ctx: AgentContext, job: Job | None) -> None:
+    async def _on_agent_start(self, ctx: AgentContext, evt: Event) -> None:
         self._ctx = ctx
         await self._start_server()
 
-    async def _on_agent_stop(self, ctx: AgentContext, job: Job | None) -> None:
+    async def _on_agent_stop(self, ctx: AgentContext, evt: Event) -> None:
         await self._stop_server()
         self.unload()
 
@@ -194,7 +195,7 @@ class WebSocketPlugin(Plugin):
                         status="pending",
                         input=input_msg,
                     )
-                    await self._ctx.emit("on_input", job)
+                    await self._ctx.emit("msg_input", job=job)
                 except (json.JSONDecodeError, ValueError, KeyError) as e:
                     error_event = MessageEvent(type="error", data={"code": "parse_error", "message": str(e)})
                     await session.emit(error_event)
@@ -214,7 +215,8 @@ class WebSocketPlugin(Plugin):
         except Exception:
             pass
 
-    async def _on_output(self, ctx: AgentContext, job: Job | None) -> None:
+    async def _on_output(self, ctx: AgentContext, evt: Event) -> None:
+        job = evt.job
         if job is None or job.output is None:
             return
         session = self._sessions.get(job.session_id)

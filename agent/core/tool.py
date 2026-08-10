@@ -142,7 +142,8 @@ class ToolRegistry:
     class DependencyError(RuntimeError):
         pass
 
-    def __init__(self) -> None:
+    def __init__(self, ctx: "AgentContext") -> None:
+        self._ctx = ctx
         self._tools: dict[str, Tool] = {}
 
     def load_modules(self, tools: list[str | dict[str, Any]]) -> None:
@@ -197,7 +198,6 @@ class ToolRegistry:
     async def execute_batch(
         self,
         tool_calls: list[ToolCall],
-        ctx: AgentContext,
         job: Job,
     ) -> None:
         """Validate and execute all tool calls concurrently.
@@ -208,9 +208,9 @@ class ToolRegistry:
         if not tool_calls:
             return
         logger.debug("Executing %d tool calls in parallel", len(tool_calls))
-        await asyncio.gather(*[self._execute_one(tc, ctx, job) for tc in tool_calls])
+        await asyncio.gather(*[self._execute_one(tc, job) for tc in tool_calls])
 
-    async def _execute_one(self, tool_call: ToolCall, ctx: AgentContext, job: Job) -> None:
+    async def _execute_one(self, tool_call: ToolCall, job: Job) -> None:
         """Execute a single tool call: record → validate → execute → record result."""
         if job.loop is not None:
             job.loop.tool_calls.append(ToolCall(
@@ -219,31 +219,33 @@ class ToolRegistry:
                 arguments=tool_call.arguments,
             ))
 
-        job.data["tool_call"] = tool_call
         result = ""
         error = ""
 
-        await ctx.emit("before_tool", job)
+        ctx = self._ctx
+        evt = await ctx.emit("before_tool", job=job, tool_call=tool_call)
 
-        try:
-            tool = self.get(tool_call.name)
-            if tool is None:
-                result = f"Error: unknown tool '{tool_call.name}'"
-                error = result
-            else:
-                try:
-                    validated = validate_arguments(tool_call.arguments, tool.parameters)
-                except ValueError as e:
-                    result = f"Error: {e}"
+        if evt.data.get("abort"):
+            result = evt.data.get("result", "Operation cancelled.")
+            error = result
+        else:
+            try:
+                tool = self.get(tool_call.name)
+                if tool is None:
+                    result = f"Error: unknown tool '{tool_call.name}'"
                     error = result
                 else:
-                    result = await tool.execute(validated, ctx=ctx, job=job)
-        except Exception as e:
-            logger.exception("Tool execution error: %s", tool_call.name)
-            result = str(e)
-            error = result
-
-        job.data["result"] = result
+                    try:
+                        validated = validate_arguments(tool_call.arguments, tool.parameters)
+                    except ValueError as e:
+                        result = f"Error: {e}"
+                        error = result
+                    else:
+                        result = await tool.execute(validated, ctx=ctx, job=job)
+            except Exception as e:
+                logger.exception("Tool execution error: %s", tool_call.name)
+                result = str(e)
+                error = result
 
         if job.loop is not None:
             job.loop.tool_results.append(ToolResult(
@@ -253,7 +255,7 @@ class ToolRegistry:
                 error=error,
             ))
 
-        await ctx.emit("after_tool", job)
+        await ctx.emit("after_tool", job=job, tool_call=tool_call, result=result, error=error)
 
     async def fail_tool_call(self, tool_call: ToolCall, job: Job, reason: str) -> None:
         """Record a tool call as failed without executing it."""
@@ -272,8 +274,6 @@ class ToolRegistry:
                 content=result,
                 error=result,
             ))
-
-        job.data["result"] = result
 
     @staticmethod
     def _check_deps(name: str, tools_dir: Path) -> None:

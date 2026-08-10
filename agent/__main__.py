@@ -5,10 +5,6 @@ import logging
 
 from agent.core.config import load_config
 from agent.core.loop import AgentLoop
-from agent.core.plugin import PluginRegistry
-from agent.core.skill import SkillRegistry
-from agent.core.tool import ToolRegistry
-from agent.core.model import ModelRegistry
 
 logging.basicConfig(
     level=logging.INFO,
@@ -21,26 +17,7 @@ async def main() -> None:
     config = load_config()
     logger.info("Config loaded: model[main]=%s", config.model.alias.main)
 
-    models = ModelRegistry(config=config.model)
-
-    tools = ToolRegistry()
-    if config.tools:
-        tools.load_modules(config.tools)
-
-    skills = SkillRegistry()
-    skills.load_skills("agent/skills", "skills")
-
-    plugins = PluginRegistry()
-    if config.plugins:
-        plugins.load_modules(config.plugins)
-
-    loop = AgentLoop(
-        models=models,
-        tools=tools,
-        skills=skills,
-        plugins=plugins,
-        config=config.agent,
-    )
+    loop = AgentLoop(config=config)
 
     await loop.start()
 
@@ -52,8 +29,6 @@ async def main() -> None:
         pass
     finally:
         await loop.stop()
-        plugins.unload_all()
-        await models.close()
         logger.info("Agent shut down.")
 
 

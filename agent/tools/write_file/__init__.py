@@ -27,10 +27,10 @@ SENSITIVE_PREFIXES = [
 ]
 
 
-def _resolve_work_dir(ctx: AgentContext, arguments: dict, config: dict) -> Path:
+def _resolve_work_dir(ctx: AgentContext, arguments: dict, config: dict, job: Job) -> Path:
     work_dir = (
         arguments.get("work_dir")
-        or ctx.data.get("work_dir")
+        or job.data.get("work_dir")
         or config.get("work_dir")
         or "."
     )
@@ -77,9 +77,8 @@ def _check_write_size(content: str, max_size: int | None = None) -> int:
 
 
 async def _request_confirm(ctx: AgentContext, job: Job, description: str) -> bool:
-    ctx.data["confirm_description"] = description
-    await ctx.emit("request_confirm", job)
-    return ctx.data.pop("confirm_decision", "deny") == "approve"
+    evt = await ctx.emit("request_confirm", job=job, confirm_description=description)
+    return evt.data.get("confirm_decision", "deny") == "approve"
 
 
 class WriteFileTool(Tool):
@@ -123,7 +122,7 @@ class WriteFileTool(Tool):
         overwrite = bool(arguments.get("overwrite", False))
         force = bool(arguments.get("force", False))
 
-        work_dir = _resolve_work_dir(ctx, arguments, self.config)
+        work_dir = _resolve_work_dir(ctx, arguments, self.config, job)
 
         if force:
             path = _sanitize_path(file_path, work_dir, force=True)

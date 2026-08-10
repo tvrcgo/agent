@@ -25,10 +25,10 @@ SENSITIVE_PREFIXES = [
 ]
 
 
-def _resolve_work_dir(ctx: AgentContext, arguments: dict, config: dict) -> Path:
+def _resolve_work_dir(ctx: AgentContext, arguments: dict, config: dict, job: Job) -> Path:
     work_dir = (
         arguments.get("work_dir")
-        or ctx.data.get("work_dir")
+        or job.data.get("work_dir")
         or config.get("work_dir")
         or "."
     )
@@ -67,9 +67,8 @@ def _sanitize_path(file_path: str, work_dir: Path, force: bool = False) -> Path:
 
 
 async def _request_confirm(ctx: AgentContext, job: Job, description: str) -> bool:
-    ctx.data["confirm_description"] = description
-    await ctx.emit("request_confirm", job)
-    return ctx.data.pop("confirm_decision", "deny") == "approve"
+    evt = await ctx.emit("request_confirm", job=job, confirm_description=description)
+    return evt.data.get("confirm_decision", "deny") == "approve"
 
 
 class GlobTool(Tool):
@@ -106,7 +105,7 @@ class GlobTool(Tool):
         search_path = arguments.get("path", "")
         force = bool(arguments.get("force", False))
 
-        work_dir = _resolve_work_dir(ctx, arguments, self.config)
+        work_dir = _resolve_work_dir(ctx, arguments, self.config, job)
 
         if search_path:
             if force:
