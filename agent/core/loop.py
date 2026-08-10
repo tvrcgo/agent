@@ -3,16 +3,13 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass, field
-from typing import Any, TYPE_CHECKING
+from typing import Any
 
 from agent.core.config import AgentConfig
 from agent.core.model import ModelRegistry, ModelResponse, StreamChunk, ToolCall, ToolResult
 from agent.core.plugin import PluginRegistry
 from agent.core.skill import SkillRegistry
 from agent.core.tool import ToolRegistry
-
-if TYPE_CHECKING:
-    from agent.core.tool import Tool
 
 logger = logging.getLogger(__name__)
 
@@ -181,8 +178,12 @@ class AgentLoop:
                     job.status = "acting"
                     await ctx.emit("before_tools", job)
 
-                    for tool_call in response.tool_calls:
-                        await self._execute_tool(tool_call, job)
+                    if response.finish_reason == "length":
+                        logger.warning("Response truncated (length), auto-failing tool calls")
+                        for tool_call in response.tool_calls:
+                            await self._tools.fail_tool_call(tool_call, job, "Response truncated, tool call not executed")
+                    else:
+                        await self._tools.execute_batch(response.tool_calls, ctx, job)
 
                     if job.output is not None and job.loop is not None:
                         job.output.loops.append(job.loop)
@@ -223,46 +224,6 @@ class AgentLoop:
                 next_job = self._queue_jobs.pop(0)
                 logger.info("Starting queued job %s", next_job.id)
                 asyncio.create_task(self._handle_chat(next_job))
-
-    async def _execute_tool(self, tool_call: ToolCall, job: Job) -> None:
-        job.data["tool_call"] = tool_call
-
-        if job.loop is not None:
-            job.loop.tool_calls.append(ToolCall(
-                id=tool_call.id,
-                name=tool_call.name,
-                arguments=tool_call.arguments,
-            ))
-
-        ctx = self.ctx
-        result = ""
-        error = ""
-
-        await ctx.emit("before_tool", job)
-
-        try:
-            tool = self._tools.get(tool_call.name)
-            if tool:
-                result = await tool.execute(tool_call.arguments, ctx=ctx, job=job)
-            else:
-                result = f"Error: unknown tool '{tool_call.name}'"
-                error = result
-        except Exception as e:
-            logger.exception("Tool execution error: %s", tool_call.name)
-            result = str(e)
-            error = result
-
-        job.data["result"] = result
-
-        if job.loop is not None:
-            job.loop.tool_results.append(ToolResult(
-                tool_call_id=tool_call.id,
-                name=tool_call.name,
-                content=result,
-                error=error,
-            ))
-
-        await ctx.emit("after_tool", job)
 
     async def _on_command_cancel(self, ctx: AgentContext, job: Job | None) -> None:
         if job is None:

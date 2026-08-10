@@ -4,6 +4,20 @@
 ## [unreleased] - 2026-08-10
 
 ### 核心摘要
+Tool 参数验证 + 并行执行。验证和批量执行逻辑收归 ToolRegistry，loop 精简为核心调度。
+
+### 变更
+- 新增：模块级 `validate_arguments()` 基于 JSON Schema 做参数验证（类型检查/必填/默认值/枚举/范围）
+- 新增：`ToolRegistry.execute_batch()` 批量执行工具，验证+执行封装在内部，同一轮 tool call 全部并行
+- 新增：`ToolRegistry.fail_tool_call()` 记录失败工具调用
+- 新增：`ModelResponse.finish_reason` 字段，支持截断保护
+- 重构：`loop.py` 删除 `_validate_tool_calls`、`_execute_tools_parallel`、`_execute_tool`、`_fail_tool_call` 四个方法，工具相关逻辑收归 ToolRegistry
+
+### 上下文
+- 方案详见 `plan-tool-validation-parallel.md`
+- 影响范围：`agent/core/tool.py`、`agent/core/loop.py`、`agent/core/model.py`
+
+### 核心摘要
 引入 LLM 消息类型体系（`SystemMessage`/`UserMessage`/`AssistantMessage`/`ToolResult`），统一消息定义到 `model.py`，消除重复类型定义。
 
 ### 变更

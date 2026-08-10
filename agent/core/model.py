@@ -59,6 +59,7 @@ class ModelResponse:
     thinking: str | None = None
     tool_calls: list[ToolCall] | None = None
     usage: Usage | None = None
+    finish_reason: str | None = None
 
 
 @dataclass
@@ -154,6 +155,9 @@ class ModelProvider:
                         obj = json.loads(data)
                         choices = obj.get("choices", [])
                         if choices:
+                            finish = choices[0].get("finish_reason")
+                            if finish:
+                                response.finish_reason = finish
                             delta = choices[0].get("delta", {})
                             if "tool_calls" in delta:
                                 for tc in delta["tool_calls"]:
@@ -266,6 +270,7 @@ class ModelProvider:
         text: str | None = message.get("content")
         thinking: str | None = None
         tool_calls: list[ToolCall] | None = None
+        finish_reason: str | None = choice.get("finish_reason")
 
         # Some providers return reasoning/thinking in a separate field
         if "reasoning_content" in message:
@@ -298,6 +303,7 @@ class ModelProvider:
             thinking=thinking,
             tool_calls=tool_calls,
             usage=usage,
+            finish_reason=finish_reason,
         )
 
 
