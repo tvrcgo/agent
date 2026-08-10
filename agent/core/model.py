@@ -19,21 +19,38 @@ class ToolCall:
     name: str
     arguments: dict[str, Any] = field(default_factory=dict)
 
+@dataclass
+class SystemMessage:
+    role: str = "system"
+    content: str | None = None
+
+
+@dataclass
+class UserMessage:
+    role: str = "user"
+    content: str | None = None
+
+
+@dataclass
+class AssistantMessage:
+    role: str = "assistant"
+    content: str | None = None
+    tool_calls: list[ToolCall] | None = None
+    thinking: str | None = None
+
+@dataclass
+class ToolResult:
+    role: str = "tool"
+    content: str | None = None
+    tool_call_id: str | None = None
+    name: str | None = None
+    error: str = ""
 
 @dataclass
 class Usage:
     prompt_tokens: int = 0
     completion_tokens: int = 0
     total_tokens: int = 0
-
-
-@dataclass
-class Message:
-    role: str
-    content: str | None = None
-    tool_calls: list[ToolCall] | None = None
-    tool_call_id: str | None = None
-    thinking: str | None = None
 
 
 @dataclass
@@ -70,7 +87,7 @@ class ModelProvider:
 
     async def chat(
         self,
-        messages: list[Message],
+        messages: list[SystemMessage | UserMessage | AssistantMessage | ToolResult],
         tools: list[dict[str, Any]] | None = None,
     ) -> ModelResponse:
         payload: dict[str, Any] = {
@@ -97,7 +114,7 @@ class ModelProvider:
 
     async def chat_stream(
         self,
-        messages: list[Message],
+        messages: list[SystemMessage | UserMessage | AssistantMessage | ToolResult],
         tools: list[dict[str, Any]] | None = None,
         on_chunk: Callable[[StreamChunk], Coroutine[Any, Any, None]] | None = None,
     ) -> ModelResponse:
@@ -203,29 +220,40 @@ class ModelProvider:
             return chunk
         return None
 
-    def _format_messages(self, messages: list[Message]) -> list[dict[str, Any]]:
+    def _format_messages(self, messages: list[SystemMessage | UserMessage | AssistantMessage | ToolResult]) -> list[dict[str, Any]]:
         formatted: list[dict[str, Any]] = []
         for msg in messages:
-            m: dict[str, Any] = {"role": msg.role}
-            if msg.content:
-                m["content"] = msg.content
-            if msg.thinking:
-                m["reasoning_content"] = msg.thinking
-            if msg.tool_calls:
-                m["tool_calls"] = [
-                    {
-                        "id": tc.id,
-                        "type": "function",
-                        "function": {
-                            "name": tc.name,
-                            "arguments": json.dumps(tc.arguments),
-                        },
-                    }
-                    for tc in msg.tool_calls
-                ]
-            if msg.tool_call_id:
-                m["tool_call_id"] = msg.tool_call_id
-            formatted.append(m)
+            if isinstance(msg, AssistantMessage):
+                m: dict[str, Any] = {"role": "assistant"}
+                if msg.content:
+                    m["content"] = msg.content
+                if msg.thinking:
+                    m["reasoning_content"] = msg.thinking
+                if msg.tool_calls:
+                    m["tool_calls"] = [
+                        {
+                            "id": tc.id,
+                            "type": "function",
+                            "function": {
+                                "name": tc.name,
+                                "arguments": json.dumps(tc.arguments),
+                            },
+                        }
+                        for tc in msg.tool_calls
+                    ]
+                formatted.append(m)
+            elif isinstance(msg, ToolResult):
+                m: dict[str, Any] = {"role": "tool", "content": msg.content or ""}
+                if msg.tool_call_id:
+                    m["tool_call_id"] = msg.tool_call_id
+                formatted.append(m)
+            elif isinstance(msg, SystemMessage) or isinstance(msg, UserMessage):
+                m: dict[str, Any] = {"role": msg.role}
+                if msg.content:
+                    m["content"] = msg.content
+                formatted.append(m)
+            else:
+                logger.debug("Dropping unknown message role: %s", msg.role)
         return formatted
 
     def _format_tools(self, tools: list[dict[str, Any]]) -> list[dict[str, Any]]:

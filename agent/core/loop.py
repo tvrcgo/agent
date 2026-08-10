@@ -6,11 +6,10 @@ from dataclasses import dataclass, field
 from typing import Any, TYPE_CHECKING
 
 from agent.core.config import AgentConfig
-
+from agent.core.model import ModelRegistry, ModelResponse, StreamChunk, ToolCall, ToolResult
 from agent.core.plugin import PluginRegistry
 from agent.core.skill import SkillRegistry
 from agent.core.tool import ToolRegistry
-from agent.core.model import ModelRegistry, ModelResponse, StreamChunk, ToolCall
 
 if TYPE_CHECKING:
     from agent.core.tool import Tool
@@ -35,25 +34,10 @@ class InputMessage:
 
 
 @dataclass
-class ToolCallItem:
-    id: str
-    name: str
-    arguments: dict = field(default_factory=dict)
-
-
-@dataclass
-class ToolResultItem:
-    id: str
-    name: str
-    result: str
-    error: str = ""
-
-
-@dataclass
 class LoopData:
     thinking: str = ""
-    tool_calls: list[ToolCallItem] = field(default_factory=list)
-    tool_results: list[ToolResultItem] = field(default_factory=list)
+    tool_calls: list[ToolCall] = field(default_factory=list)
+    tool_results: list[ToolResult] = field(default_factory=list)
     queue_messages: list[str] = field(default_factory=list)
     skills_prompt: str = ""
 
@@ -244,7 +228,7 @@ class AgentLoop:
         job.data["tool_call"] = tool_call
 
         if job.loop is not None:
-            job.loop.tool_calls.append(ToolCallItem(
+            job.loop.tool_calls.append(ToolCall(
                 id=tool_call.id,
                 name=tool_call.name,
                 arguments=tool_call.arguments,
@@ -271,10 +255,10 @@ class AgentLoop:
         job.data["result"] = result
 
         if job.loop is not None:
-            job.loop.tool_results.append(ToolResultItem(
-                id=tool_call.id,
+            job.loop.tool_results.append(ToolResult(
+                tool_call_id=tool_call.id,
                 name=tool_call.name,
-                result=result,
+                content=result,
                 error=error,
             ))
 

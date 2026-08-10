@@ -5,11 +5,11 @@ import logging
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, TYPE_CHECKING
+from typing import Any
 
 from agent.core.plugin import Plugin, PluginRegistry
 from agent.core.loop import AgentContext, Job, MessageEvent
-from agent.core.model import Message, ToolCall
+from agent.core.model import AssistantMessage, SystemMessage, ToolResult, UserMessage, ToolCall
 
 
 logger = logging.getLogger(__name__)
@@ -17,8 +17,8 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class _SessionState:
-    system_prompt: Message
-    messages: list[Message] = field(default_factory=list)
+    system_prompt: SystemMessage
+    messages: list[SystemMessage | UserMessage | AssistantMessage | ToolResult] = field(default_factory=list)
     last_prompt_tokens: int = 0
     cold_loaded: bool = False
 
@@ -29,7 +29,7 @@ class SessionPlugin(Plugin):
     def __init__(self) -> None:
         self._base_path = Path("./data/sessions")
         self._sessions: dict[str, _SessionState] = {}
-        self._system_prompt: Message | None = None
+        self._system_prompt: SystemMessage | None = None
         self._max_load_messages: int = 100
         self._max_tokens: int = 65536
         self._compress_threshold: float = 0.9
@@ -53,9 +53,9 @@ class SessionPlugin(Plugin):
 
         prompt_path = Path(config.get('system_prompt_path', 'agent/AGENTS.md'))
         if prompt_path.exists():
-            self._system_prompt = Message(role="system", content=prompt_path.read_text(encoding="utf-8"))
+            self._system_prompt = SystemMessage(content=prompt_path.read_text(encoding="utf-8"))
         else:
-            self._system_prompt = Message(role="system", content="You are an AI agent.")
+            self._system_prompt = SystemMessage(content="You are an AI agent.")
 
         logger.info("SessionPlugin initialized, persistence_path=%s", self._base_path)
 
@@ -77,7 +77,7 @@ class SessionPlugin(Plugin):
         # Each job writes to its own storage (job.id)
         # Sub-jobs get empty context, only their own input message
         state = self._get_or_load(job.id)
-        state.messages.append(Message(role="user", content=content))
+        state.messages.append(UserMessage(content=content))
         self._append(job.id, {"role": "user", "content": content})
 
     async def _on_before_llm(self, ctx: AgentContext, job: Job | None) -> None:
@@ -104,15 +104,15 @@ class SessionPlugin(Plugin):
         # Only root job consumes queued messages
         if job.id == job.session_id and job.loop and job.loop.queue_messages:
             for content in job.loop.queue_messages:
-                state.messages.append(Message(role="user", content=content))
+                state.messages.append(UserMessage(content=content))
                 self._append(job.id, {"role": "user", "content": content})
 
         msgs = self._get_messages(state)
         now = datetime.now().strftime("%Y-%m-%d %A %H:%M:%S")
-        msgs[0] = Message(role="system", content=msgs[0].content + f"\n\nCurrent time: {now}")
+        msgs[0] = SystemMessage(content=msgs[0].content + f"\n\nCurrent time: {now}")
 
         if job.loop and job.loop.skills_prompt:
-            msgs[0] = Message(role="system", content=msgs[0].content + "\n\n" + job.loop.skills_prompt)
+            msgs[0] = SystemMessage(content=msgs[0].content + "\n\n" + job.loop.skills_prompt)
 
         job.data["messages"] = msgs
 
@@ -129,8 +129,7 @@ class SessionPlugin(Plugin):
             await ctx.emit("on_output", job)
 
         state = self._get_or_load(job.id)
-        state.messages.append(Message(
-            role="assistant",
+        state.messages.append(AssistantMessage(
             content=response.text,
             thinking=response.thinking,
             tool_calls=response.tool_calls,
@@ -176,7 +175,7 @@ class SessionPlugin(Plugin):
         # Persist to session (for all jobs)
         if tool_call:
             state = self._get_or_load(job.id)
-            state.messages.append(Message(role="tool", content=result, tool_call_id=tool_call.id))
+            state.messages.append(ToolResult(content=result, tool_call_id=tool_call.id))
             self._append(job.id, {
                 "role": "tool",
                 "content": result,
@@ -206,7 +205,7 @@ class SessionPlugin(Plugin):
                     messages.append(self._deserialize_message(json.loads(line)))
             state = _SessionState(system_prompt=self._system_prompt)
             for msg in messages:
-                if msg.role == "system":
+                if isinstance(msg, SystemMessage):
                     state.system_prompt = msg
                 else:
                     state.messages.append(msg)
@@ -262,13 +261,14 @@ class SessionPlugin(Plugin):
     def _clean_orphan_tool_calls(state: _SessionState) -> None:
         msgs = state.messages
         for i in range(len(msgs) - 1, -1, -1):
-            if not msgs[i].tool_calls:
+            msg = msgs[i]
+            if not isinstance(msg, AssistantMessage) or not msg.tool_calls:
                 continue
-            expected_ids = {tc.id for tc in msgs[i].tool_calls}
+            expected_ids = {tc.id for tc in msg.tool_calls}
             found_ids: set[str] = set()
             cut_idx = i + 1
             for j in range(i + 1, len(msgs)):
-                if msgs[j].role == "tool" and msgs[j].tool_call_id:
+                if isinstance(msgs[j], ToolResult) and msgs[j].tool_call_id:
                     found_ids.add(msgs[j].tool_call_id)
                     cut_idx = j + 1
                 else:
@@ -279,10 +279,8 @@ class SessionPlugin(Plugin):
                 del msgs[i:cut_idx]
 
     @staticmethod
-    def _get_messages(state: _SessionState) -> list[Message]:
-        msgs = [state.system_prompt]
-        msgs.extend(state.messages)
-        return msgs
+    def _get_messages(state: _SessionState) -> list[SystemMessage | UserMessage | AssistantMessage | ToolResult]:
+        return [state.system_prompt] + state.messages
 
     def _estimate_tokens(self, state: _SessionState) -> int:
         if state.last_prompt_tokens > 0:
@@ -291,9 +289,9 @@ class SessionPlugin(Plugin):
         for msg in self._get_messages(state):
             if msg.content:
                 total_chars += len(msg.content)
-            if msg.thinking:
+            if isinstance(msg, AssistantMessage) and msg.thinking:
                 total_chars += len(msg.thinking)
-            if msg.tool_calls:
+            if isinstance(msg, AssistantMessage) and msg.tool_calls:
                 for tc in msg.tool_calls:
                     total_chars += len(tc.name) + len(str(tc.arguments))
         return total_chars // 4
@@ -319,16 +317,13 @@ class SessionPlugin(Plugin):
             return
 
         formatted = self._format_for_summary(old)
-        summary_prompt = [
-            Message(
-                role="system",
-                content=(
-                    "You are a conversation summarizer. Summarize the following conversation "
-                    "history concisely, preserving all key facts, decisions, actions taken, "
-                    "and their results. Output only the summary, no preamble."
-                ),
-            ),
-            Message(role="user", content=formatted),
+        summary_prompt: list[SystemMessage | UserMessage | AssistantMessage | ToolResult] = [
+            SystemMessage(content=(
+                "You are a conversation summarizer. Summarize the following conversation "
+                "history concisely, preserving all key facts, decisions, actions taken, "
+                "and their results. Output only the summary, no preamble."
+            )),
+            UserMessage(content=formatted),
         ]
 
         try:
@@ -341,7 +336,7 @@ class SessionPlugin(Plugin):
             return
 
         state.messages = [
-            Message(role="user", content=f"[Previous conversation summary]\n{summary}"),
+            UserMessage(content=f"[Previous conversation summary]\n{summary}"),
         ] + state.messages[-safe_keep:]
         state.last_prompt_tokens = 0
         logger.info("Session compressed: %d messages -> summary + %d recent",
@@ -362,44 +357,53 @@ class SessionPlugin(Plugin):
         return d
 
     @staticmethod
-    def _keep_iterations(messages: list[Message], n: int) -> int:
+    def _keep_iterations(messages: list[SystemMessage | UserMessage | AssistantMessage | ToolResult], n: int) -> int:
         count = 0
         for i in range(len(messages) - 1, -1, -1):
-            if messages[i].role == "assistant":
+            if isinstance(messages[i], AssistantMessage):
                 count += 1
                 if count >= n:
                     return len(messages) - i
         return len(messages)
 
     @staticmethod
-    def _format_for_summary(messages: list[Message]) -> str:
+    def _format_for_summary(messages: list[SystemMessage | UserMessage | AssistantMessage | ToolResult]) -> str:
         lines: list[str] = []
         for msg in messages:
             role = msg.role
             content = msg.content or ""
-            if role == "tool" and len(content) > 500:
+            if isinstance(msg, ToolResult) and len(content) > 500:
                 content = content[:500] + "..."
-            if msg.tool_calls:
+            if isinstance(msg, AssistantMessage) and msg.tool_calls:
                 tc_names = [tc.name for tc in msg.tool_calls]
                 content = f"[called: {', '.join(tc_names)}] " + content
             lines.append(f"[{role}] {content}")
         return "\n".join(lines)
 
     @staticmethod
-    def _deserialize_message(d: dict[str, Any]) -> Message:
-        tool_calls = None
-        if "tool_calls" in d:
-            tool_calls = [
-                ToolCall(id=tc["id"], name=tc["name"], arguments=tc.get("arguments", {}))
-                for tc in d["tool_calls"]
-            ]
-        return Message(
-            role=d["role"],
-            content=d.get("content"),
-            thinking=d.get("thinking"),
-            tool_calls=tool_calls,
-            tool_call_id=d.get("tool_call_id"),
-        )
+    def _deserialize_message(d: dict[str, Any]) -> SystemMessage | UserMessage | AssistantMessage | ToolResult:
+        role = d["role"]
+        if role == "tool":
+            return ToolResult(
+                content=d.get("content"),
+                tool_call_id=d.get("tool_call_id"),
+            )
+        elif role == "assistant":
+            tool_calls = None
+            if "tool_calls" in d:
+                tool_calls = [
+                    ToolCall(id=tc["id"], name=tc["name"], arguments=tc.get("arguments", {}))
+                    for tc in d["tool_calls"]
+                ]
+            return AssistantMessage(
+                content=d.get("content"),
+                tool_calls=tool_calls,
+                thinking=d.get("thinking"),
+            )
+        elif role == "system":
+            return SystemMessage(content=d.get("content"))
+        else:
+            return UserMessage(content=d.get("content"))
 
     async def _on_before_tools(self, ctx: AgentContext, job: Job | None) -> None:
         if job is None or job.output is None:
