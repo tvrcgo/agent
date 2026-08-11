@@ -35,6 +35,7 @@ class AgentConfig(BaseModel):
     max_iterations: int = 100
     max_concurrent: int = 10
     stream: bool = False
+    steering: dict[str, Any] = {}
 
 
 class Config(BaseModel):

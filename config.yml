@@ -26,6 +26,8 @@ agent:
   max_concurrent: 10
   max_iterations: 100
   stream: true
+  steering:
+    drain: all
 
 tools:
   - read_file

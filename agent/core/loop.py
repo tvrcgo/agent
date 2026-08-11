@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections import defaultdict
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import Any
 
 from agent.core.config import Config
@@ -13,6 +15,33 @@ from agent.core.skill import SkillRegistry
 from agent.core.tool import ToolRegistry
 
 logger = logging.getLogger(__name__)
+
+
+class DrainMode(str, Enum):
+    ALL = "all"
+    ONE_AT_A_TIME = "one-at-a-time"
+
+
+@dataclass
+class MessageQueue:
+    messages: list[str] = field(default_factory=list)
+    mode: DrainMode = DrainMode.ALL
+
+    def push(self, content: str) -> None:
+        self.messages.append(content)
+
+    def drain(self) -> list[str]:
+        if not self.messages:
+            return []
+        if self.mode == DrainMode.ONE_AT_A_TIME:
+            return [self.messages.pop(0)]
+        result = list(self.messages)
+        self.messages.clear()
+        return result
+
+    @property
+    def has_pending(self) -> bool:
+        return len(self.messages) > 0
 
 
 @dataclass
@@ -112,7 +141,11 @@ class AgentLoop:
         self._plugins = PluginRegistry(self._ctx)
         self._jobs: dict[str, Job] = {}
         self._queue_jobs: list[Job] = []
-        self._steering_messages: dict[str, list[str]] = {}
+        # steering/follow-up queue
+        drain_mode = DrainMode(config.agent.steering.get("drain", "all"))
+        self._message_queues: defaultdict[str, MessageQueue] = defaultdict(
+            lambda: MessageQueue(mode=drain_mode)
+        )
 
     @property
     def ctx(self) -> AgentContext:
@@ -136,7 +169,8 @@ class AgentLoop:
 
     async def _handle_chat(self, job: Job) -> None:
         if self._is_running(job.id):
-            self._steering_messages.setdefault(job.id, []).append(job.input.content if job.input else "")
+            content = job.input.content if job.input else ""
+            self._message_queues[job.id].push(content)
             return
 
         active = sum(1 for j in self._jobs.values() if j._task is not None and not j._task.done())
@@ -159,9 +193,12 @@ class AgentLoop:
 
         try:
             for _ in range(self._config.agent.max_iterations):
+                # steering
+                q = self._message_queues[job.id]
+                steering = q.drain()
 
                 job.loop = LoopData(
-                    steering_messages=self._steering_messages.pop(job.id, None) or [],
+                    steering_messages=steering,
                     skills_prompt=self._skills.get_skills_prompt(),
                 )
                 job.status = "thinking"
@@ -216,6 +253,12 @@ class AgentLoop:
                 if job.output is not None and job.loop is not None:
                     job.output.loops.append(job.loop)
 
+                # follow-up
+                q = self._message_queues[job.id]
+                if q.has_pending:
+                    await ctx.emit("after_loop", job=job)
+                    continue
+
                 job.status = "done"
                 await ctx.emit("after_loop", job=job)
                 await ctx.emit("after_job", job=job, reason="done")
@@ -235,6 +278,7 @@ class AgentLoop:
         finally:
             await ctx.emit("job_complete", job=job)
             self._jobs.pop(job.id, None)
+            self._message_queues.pop(job.id, None)
             if self._queue_jobs:
                 next_job = self._queue_jobs.pop(0)
                 logger.info("Starting queued job %s", next_job.id)
