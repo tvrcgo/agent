@@ -23,14 +23,14 @@ class ConfirmPlugin(Plugin):
     def load(self, ctx: AgentContext, config: dict = {}) -> None:
         self._timeout = float(config.get("confirm_timeout", 120))
 
-        ctx.on("before_tool", self._on_before_tool)
+        ctx.on("tool_start", self._on_tool_start)
         ctx.on("request_confirm", self._on_request_confirm)
         ctx.on("cmd_confirm", self._on_command_confirm)
 
     def unload(self) -> None:
         self._pending.clear()
 
-    async def _on_before_tool(self, ctx: AgentContext, evt: Event) -> None:
+    async def _on_tool_start(self, ctx: AgentContext, evt: Event) -> None:
         job = evt.job
         if job is None:
             return

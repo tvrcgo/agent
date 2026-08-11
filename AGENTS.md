@@ -20,7 +20,7 @@
 `EventBus` 是 agent 的通信中枢，`AgentLoop` 持有实例并通过 `ctx` 暴露 `on/off/emit`。事件 `Event{name, job, data}` 扁平结构：`job` 定位到具体 job（多 job 并发下 ctx 不持有 job），`data` 携带业务字段。`emit(name, job=None, **data)` 返回 Event，订阅者可写入 `evt.field` 回填（如 `request_confirm` 的决策结果）。运行时数据（LLM 响应、工具结果、reason/error、confirm 决策）一律随事件传递，`job.data` 只存静态数据（`work_dir`）与执行缓存（`messages`）。
 
 ### 消息排队
-job 运行中收到的 chat 消息排队，下轮迭代开始前由 loop 写入 `job.data`，SessionPlugin 在 `before_llm` 消费为 user 消息。
+job 运行中收到的 chat 消息排队，下轮迭代开始前由 loop 写入 `job.data`，SessionPlugin 在 `llm_start` 消费为 user 消息。
 
 ### 上下文压缩
 存储无上限，冷启只加载尾部若干条。token 超阈值时通过独立 LLM 调用压缩旧消息，保留最近原文。压缩在内存完成，JSONL 保留完整历史。
@@ -29,7 +29,7 @@ job 运行中收到的 chat 消息排队，下轮迭代开始前由 loop 写入 
 复杂任务可通过 `sub_job` 工具并行执行。子 Job 共享同一 AgentLoop 的 LLM、tools 和 skills，通过 `asyncio.gather` 并发执行。`max_sub_job_depth` 限制递归深度。
 
 ### 插件生命周期
-`agent_start` → `before_job` → `before_llm` → `after_llm` → `before_tool` → 工具执行 → `after_tool` → `before_tools` / `after_tools` → 循环 → `after_job` / `job_error` → `job_complete` / `agent_stop`。`msg_output` 由插件在需要推送事件时主动触发。`cmd_<action>` 钩子处理 UI 操作。
+`agent_start` → `job_start` → `llm_start` → `llm_end` → `tool_start` → 工具执行 → `tool_end` → `tools_start` / `tools_end` → 循环 → `job_end` / `job_error` → `job_complete` / `agent_stop`。`msg_output` 由插件在需要推送事件时主动触发。`cmd_<action>` 钩子处理 UI 操作。
 
 ### MCP Plugin
 MCP 作为插件，通过 HTTP 从 agent-mcp 服务同步工具。agent-mcp 运行在独立容器（`services/mcp/`），管理 Node.js MCP servers。插件每 10 分钟同步一次，移除失效 tools、注册新增 tools。工具命名格式为 `mcp_{server}_{tool}`。

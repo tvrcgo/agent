@@ -25,10 +25,10 @@ class SubJobPlugin(Plugin):
 
     def load(self, ctx: AgentContext, config: dict = {}) -> None:
         ctx.on("agent_start", self._on_agent_start)
-        ctx.on("after_llm", self._send_jobs)
-        ctx.on("after_tools", self._send_jobs)
-        ctx.on("after_job", self._send_jobs)
-        ctx.on("after_job", self._on_after_job)
+        ctx.on("llm_end", self._send_jobs)
+        ctx.on("tools_end", self._send_jobs)
+        ctx.on("job_end", self._send_jobs)
+        ctx.on("job_end", self._on_job_end)
         self._max_sub_job_depth = config.get("max_depth", 2)
         logger.info("SubJobPlugin initialized, max_depth=%d", self._max_sub_job_depth)
 
@@ -55,7 +55,7 @@ class SubJobPlugin(Plugin):
             job.output.events.append(MessageEvent(type="data", data={"name": "jobs", "jobs": jobs_data}))
             await ctx.emit("msg_output", job=job)
 
-    async def _on_after_job(self, ctx: AgentContext, evt: Event) -> None:
+    async def _on_job_end(self, ctx: AgentContext, evt: Event) -> None:
         job = evt.job
         if job is None:
             return

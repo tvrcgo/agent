@@ -182,7 +182,7 @@ class AgentLoop:
         job.output = OutputMessage(session_id=job.session_id)
         job.status = "pending"
         self._jobs[job.id] = job
-        await self.ctx.emit("before_job", job=job)
+        await self.ctx.emit("job_start", job=job)
         job._task = asyncio.create_task(self._run_loop(job))
 
     async def _handle_command(self, job: Job) -> None:
@@ -202,8 +202,8 @@ class AgentLoop:
                     skills_prompt=self._skills.get_skills_prompt(),
                 )
                 job.status = "thinking"
-                await ctx.emit("before_loop", job=job)
-                await ctx.emit("before_llm", job=job)
+                await ctx.emit("turn_start", job=job)
+                await ctx.emit("llm_start", job=job)
 
                 messages = job.data.get("messages", [])
                 tools = self._tools.get_defs()
@@ -224,14 +224,14 @@ class AgentLoop:
                         messages=messages,
                         tools=tools if tools else None,
                     )
-                await ctx.emit("after_llm", job=job, response=response)
+                await ctx.emit("llm_end", job=job, response=response)
 
                 if response.thinking:
                     job.loop.thinking = response.thinking
 
                 if response.tool_calls:
                     job.status = "acting"
-                    await ctx.emit("before_tools", job=job)
+                    await ctx.emit("tools_start", job=job)
 
                     if response.finish_reason == "length":
                         logger.warning("Response truncated (length), auto-failing tool calls")
@@ -242,8 +242,8 @@ class AgentLoop:
 
                     if job.output is not None and job.loop is not None:
                         job.output.loops.append(job.loop)
-                    await ctx.emit("after_tools", job=job)
-                    await ctx.emit("after_loop", job=job)
+                    await ctx.emit("tools_end", job=job)
+                    await ctx.emit("turn_end", job=job)
                     continue
 
                 if response.text:
@@ -256,19 +256,19 @@ class AgentLoop:
                 # follow-up
                 q = self._message_queues[job.id]
                 if q.has_pending:
-                    await ctx.emit("after_loop", job=job)
+                    await ctx.emit("turn_end", job=job)
                     continue
 
                 job.status = "done"
-                await ctx.emit("after_loop", job=job)
-                await ctx.emit("after_job", job=job, reason="done")
+                await ctx.emit("turn_end", job=job)
+                await ctx.emit("job_end", job=job, reason="done")
                 return
 
             msg = f"Reached maximum iterations ({self._config.agent.max_iterations})"
             logger.warning(msg)
             job.status = "error"
-            await ctx.emit("after_loop", job=job)
-            await ctx.emit("after_job", job=job, reason="max_iterations")
+            await ctx.emit("turn_end", job=job)
+            await ctx.emit("job_end", job=job, reason="max_iterations")
 
         except Exception as e:
             logger.exception("Error in agent loop, id=%s", job.id)

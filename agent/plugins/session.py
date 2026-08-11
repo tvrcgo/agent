@@ -37,13 +37,13 @@ class SessionPlugin(Plugin):
         self._compress_keep_recent: int = 10
 
     def load(self, ctx: AgentContext, config: dict = {}) -> None:
-        ctx.on("before_job", self._on_before_job)
-        ctx.on("before_llm", self._on_before_llm)
-        ctx.on("after_llm", self._on_after_llm)
-        ctx.on("before_tool", self._on_before_tool)
-        ctx.on("before_tools", self._on_before_tools)
-        ctx.on("after_tool", self._on_after_tool)
-        ctx.on("after_job", self._on_after_job)
+        ctx.on("job_start", self._on_job_start)
+        ctx.on("llm_start", self._on_llm_start)
+        ctx.on("llm_end", self._on_llm_end)
+        ctx.on("tool_start", self._on_tool_start)
+        ctx.on("tools_start", self._on_tools_start)
+        ctx.on("tool_end", self._on_tool_end)
+        ctx.on("job_end", self._on_job_end)
         ctx.on("job_error", self._on_job_error)
         ctx.on("cmd_compress", self._on_compress)
 
@@ -65,7 +65,7 @@ class SessionPlugin(Plugin):
         self._sessions.clear()
         logger.info("SessionPlugin shut down")
 
-    async def _on_before_job(self, ctx: AgentContext, evt: Event) -> None:
+    async def _on_job_start(self, ctx: AgentContext, evt: Event) -> None:
         job = evt.job
         if job is None or job.input is None:
             return
@@ -83,7 +83,7 @@ class SessionPlugin(Plugin):
         state.messages.append(UserMessage(content=content))
         self._append(job.id, {"role": "user", "content": content})
 
-    async def _on_before_llm(self, ctx: AgentContext, evt: Event) -> None:
+    async def _on_llm_start(self, ctx: AgentContext, evt: Event) -> None:
         job = evt.job
         if job is None or job.output is None:
             return
@@ -120,7 +120,7 @@ class SessionPlugin(Plugin):
 
         job.data["messages"] = msgs
 
-    async def _on_after_llm(self, ctx: AgentContext, evt: Event) -> None:
+    async def _on_llm_end(self, ctx: AgentContext, evt: Event) -> None:
         job = evt.job
         if job is None:
             return
@@ -144,7 +144,7 @@ class SessionPlugin(Plugin):
         self._append(job.id, self._response_to_dict(response))
 
 
-    async def _on_before_tool(self, ctx: AgentContext, evt: Event) -> None:
+    async def _on_tool_start(self, ctx: AgentContext, evt: Event) -> None:
         job = evt.job
         if job is None or job.output is None:
             return
@@ -161,7 +161,7 @@ class SessionPlugin(Plugin):
             }))
             await ctx.emit("msg_output", job=job)
 
-    async def _on_after_tool(self, ctx: AgentContext, evt: Event) -> None:
+    async def _on_tool_end(self, ctx: AgentContext, evt: Event) -> None:
         job = evt.job
         if job is None:
             return
@@ -414,7 +414,7 @@ class SessionPlugin(Plugin):
         else:
             return UserMessage(content=d.get("content"))
 
-    async def _on_before_tools(self, ctx: AgentContext, evt: Event) -> None:
+    async def _on_tools_start(self, ctx: AgentContext, evt: Event) -> None:
         job = evt.job
         if job is None or job.output is None:
             return
@@ -424,7 +424,7 @@ class SessionPlugin(Plugin):
         job.output.events.append(MessageEvent(type="status", content="acting"))
         await ctx.emit("msg_output", job=job)
 
-    async def _on_after_job(self, ctx: AgentContext, evt: Event) -> None:
+    async def _on_job_end(self, ctx: AgentContext, evt: Event) -> None:
         job = evt.job
         if job is None or job.output is None:
             return

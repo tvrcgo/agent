@@ -223,7 +223,7 @@ class ToolRegistry:
         error = ""
 
         ctx = self._ctx
-        evt = await ctx.emit("before_tool", job=job, tool_call=tool_call)
+        evt = await ctx.emit("tool_start", job=job, tool_call=tool_call)
 
         if evt.data.get("abort"):
             result = evt.data.get("result", "Operation cancelled.")
@@ -255,7 +255,7 @@ class ToolRegistry:
                 error=error,
             ))
 
-        await ctx.emit("after_tool", job=job, tool_call=tool_call, result=result, error=error)
+        await ctx.emit("tool_end", job=job, tool_call=tool_call, result=result, error=error)
 
     async def fail_tool_call(self, tool_call: ToolCall, job: Job, reason: str) -> None:
         """Record a tool call as failed without executing it."""
