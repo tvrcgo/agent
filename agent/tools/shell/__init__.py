@@ -40,7 +40,7 @@ def _resolve_work_dir(ctx: AgentContext, arguments: dict, config: dict, job: Job
     return Path(work_dir).resolve()
 
 
-def _sanitize_path(file_path: str, work_dir: Path, force: bool = False) -> Path:
+def _sanitize_path(file_path: str, work_dir: Path) -> Path:
     raw_path = Path(file_path)
     raw_str = str(raw_path).replace("\\", "/")
 
@@ -58,18 +58,11 @@ def _sanitize_path(file_path: str, work_dir: Path, force: bool = False) -> Path:
     try:
         path.relative_to(work_dir)
     except ValueError:
-        if not force:
-            raise PermissionError(
-                f"Access denied: '{path_str}' is outside work_dir '{work_dir}'. "
-                f"Use request_confirmation first, then retry with force=true."
-            )
+        raise PermissionError(
+            f"Access denied: '{path_str}' is outside work_dir '{work_dir}'."
+        )
 
     return path
-
-
-async def _request_confirm(ctx: AgentContext, job: Job, description: str) -> bool:
-    evt = await ctx.emit("request_confirm", job=job, confirm_description=description)
-    return evt.data.get("confirm_decision", "deny") == "approve"
 
 
 class ShellTool(Tool):
@@ -77,7 +70,6 @@ class ShellTool(Tool):
     description = (
         "Execute a shell command. Commands run in the work_dir by default. "
         "Output is truncated if it exceeds 100KB. "
-        "Dangerous: always request confirmation before running destructive commands."
     )
     parameters = {
         "type": "object",
@@ -95,11 +87,6 @@ class ShellTool(Tool):
                 "description": f"Timeout in seconds (default {DEFAULT_TIMEOUT})",
                 "default": DEFAULT_TIMEOUT,
             },
-            "force": {
-                "type": "boolean",
-                "description": "Bypass work_dir restriction (requires prior confirmation)",
-                "default": False,
-            },
         },
         "required": ["command"],
     }
@@ -107,25 +94,9 @@ class ShellTool(Tool):
     async def execute(self, arguments: dict, ctx: AgentContext, job: Job) -> str:
         command = arguments.get("command", "")
         timeout = int(arguments.get("timeout", DEFAULT_TIMEOUT))
-        force = bool(arguments.get("force", False))
 
         work_dir = _resolve_work_dir(ctx, arguments, self.config, job)
-
-        if force:
-            _sanitize_path(str(work_dir), work_dir, force=True)
-        else:
-            try:
-                _sanitize_path(str(work_dir), work_dir)
-            except PermissionError as e:
-                if "retry with force=true" in str(e):
-                    if await _request_confirm(
-                        ctx, job, f"Execute command outside work_dir: {command[:200]}"
-                    ):
-                        _sanitize_path(str(work_dir), work_dir, force=True)
-                    else:
-                        return "Operation cancelled by user."
-                else:
-                    raise
+        _sanitize_path(str(work_dir), work_dir)
 
         logger.info(f"Executing command in {work_dir}: {command[:200]}")
 

@@ -37,7 +37,7 @@ def _resolve_work_dir(ctx: AgentContext, arguments: dict, config: dict, job: Job
     return Path(work_dir).resolve()
 
 
-def _sanitize_path(file_path: str, work_dir: Path, force: bool = False) -> Path:
+def _sanitize_path(file_path: str, work_dir: Path) -> Path:
     raw_path = Path(file_path)
     raw_str = str(raw_path).replace("\\", "/")
 
@@ -59,11 +59,9 @@ def _sanitize_path(file_path: str, work_dir: Path, force: bool = False) -> Path:
     try:
         path.relative_to(work_dir)
     except ValueError:
-        if not force:
-            raise PermissionError(
-                f"Access denied: '{path_str}' is outside work_dir '{work_dir}'. "
-                f"Use request_confirmation first, then retry with force=true."
-            )
+        raise PermissionError(
+            f"Access denied: '{path_str}' is outside work_dir '{work_dir}'."
+        )
 
     return path
 
@@ -76,16 +74,10 @@ def _check_write_size(content: str, max_size: int | None = None) -> int:
     return size
 
 
-async def _request_confirm(ctx: AgentContext, job: Job, description: str) -> bool:
-    evt = await ctx.emit("request_confirm", job=job, confirm_description=description)
-    return evt.data.get("confirm_decision", "deny") == "approve"
-
-
 class WriteFileTool(Tool):
     name = "write_file"
     description = (
-        "Write content to a file. Creates parent directories automatically. "
-        "Requires user confirmation before overwriting existing files."
+        "Write content to a file. Creates parent directories automatically."
     )
     parameters = {
         "type": "object",
@@ -100,17 +92,12 @@ class WriteFileTool(Tool):
             },
             "overwrite": {
                 "type": "boolean",
-                "description": "Allow overwriting an existing file (requires confirmation)",
+                "description": "Allow overwriting an existing file",
                 "default": False,
             },
             "work_dir": {
                 "type": "string",
                 "description": "Override the working directory for this operation",
-            },
-            "force": {
-                "type": "boolean",
-                "description": "Bypass work_dir restriction (requires prior confirmation)",
-                "default": False,
             },
         },
         "required": ["file_path", "content"],
@@ -120,35 +107,17 @@ class WriteFileTool(Tool):
         file_path = arguments.get("file_path", "")
         content = arguments.get("content", "")
         overwrite = bool(arguments.get("overwrite", False))
-        force = bool(arguments.get("force", False))
 
         work_dir = _resolve_work_dir(ctx, arguments, self.config, job)
-
-        if force:
-            path = _sanitize_path(file_path, work_dir, force=True)
-        else:
-            try:
-                path = _sanitize_path(file_path, work_dir)
-            except PermissionError as e:
-                if "retry with force=true" in str(e):
-                    if await _request_confirm(ctx, job, f"Write file outside work_dir: {file_path}"):
-                        path = _sanitize_path(file_path, work_dir, force=True)
-                    else:
-                        return "Operation cancelled by user."
-                else:
-                    raise
+        path = _sanitize_path(file_path, work_dir)
 
         _check_write_size(content)
 
         if path.exists() and not overwrite:
             return (
                 f"Error: file '{path}' already exists. "
-                f"Retry with overwrite=true to overwrite after confirmation."
+                f"Retry with overwrite=true to overwrite."
             )
-
-        if path.exists() and overwrite:
-            if not await _request_confirm(ctx, job, f"Overwrite existing file: {path}"):
-                return "Operation cancelled by user."
 
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content, encoding="utf-8")

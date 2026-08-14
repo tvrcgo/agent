@@ -37,7 +37,7 @@ def _resolve_work_dir(ctx: AgentContext, arguments: dict, config: dict, job: Job
     return Path(work_dir).resolve()
 
 
-def _sanitize_path(file_path: str, work_dir: Path, force: bool = False) -> Path:
+def _sanitize_path(file_path: str, work_dir: Path) -> Path:
     raw_path = Path(file_path)
     raw_str = str(raw_path).replace("\\", "/")
 
@@ -59,11 +59,9 @@ def _sanitize_path(file_path: str, work_dir: Path, force: bool = False) -> Path:
     try:
         path.relative_to(work_dir)
     except ValueError:
-        if not force:
-            raise PermissionError(
-                f"Access denied: '{path_str}' is outside work_dir '{work_dir}'. "
-                f"Use request_confirmation first, then retry with force=true."
-            )
+        raise PermissionError(
+            f"Access denied: '{path_str}' is outside work_dir '{work_dir}'."
+        )
 
     return path
 
@@ -79,11 +77,6 @@ def _check_read_size(path: Path, max_size: int | None = None) -> None:
             )
     except FileNotFoundError:
         raise FileNotFoundError(f"File not found: {path}")
-
-
-async def _request_confirm(ctx: AgentContext, job: Job, description: str) -> bool:
-    evt = await ctx.emit("request_confirm", job=job, confirm_description=description)
-    return evt.data.get("confirm_decision", "deny") == "approve"
 
 
 class ReadFileTool(Tool):
@@ -113,11 +106,6 @@ class ReadFileTool(Tool):
                 "type": "string",
                 "description": "Override the working directory for this operation",
             },
-            "force": {
-                "type": "boolean",
-                "description": "Bypass work_dir restriction (requires prior confirmation)",
-                "default": False,
-            },
         },
         "required": ["file_path"],
     }
@@ -126,23 +114,9 @@ class ReadFileTool(Tool):
         file_path = arguments.get("file_path", "")
         offset = max(1, int(arguments.get("offset", 1)))
         limit = int(arguments.get("limit", 2000))
-        force = bool(arguments.get("force", False))
 
         work_dir = _resolve_work_dir(ctx, arguments, self.config, job)
-
-        if force:
-            path = _sanitize_path(file_path, work_dir, force=True)
-        else:
-            try:
-                path = _sanitize_path(file_path, work_dir)
-            except PermissionError as e:
-                if "retry with force=true" in str(e):
-                    if await _request_confirm(ctx, job, f"Read file outside work_dir: {file_path}"):
-                        path = _sanitize_path(file_path, work_dir, force=True)
-                    else:
-                        return "Operation cancelled by user."
-                else:
-                    raise
+        path = _sanitize_path(file_path, work_dir)
         _check_read_size(path)
 
         try:
