@@ -9,7 +9,7 @@ from typing import Any
 
 from agent.core.config import Config
 from agent.core.events import Event, EventBus
-from agent.core.model import ModelRegistry, ModelResponse, StreamChunk, ToolCall, ToolResult
+from agent.core.model import ModelRegistry, ModelResponse, StreamChunk, ToolResult
 from agent.core.plugin import PluginRegistry
 from agent.core.skill import SkillRegistry
 from agent.core.tool import ToolRegistry
@@ -63,7 +63,6 @@ class InputMessage:
 @dataclass
 class LoopData:
     thinking: str = ""
-    tool_calls: list[ToolCall] = field(default_factory=list)
     tool_results: list[ToolResult] = field(default_factory=list)
     steering_messages: list[str] = field(default_factory=list)
     skills_prompt: str = ""
@@ -97,29 +96,21 @@ class AgentContext:
 
     @property
     def models(self) -> Any:
-        if self._self is not None:
-            return self._self._models
-        return None
+        return self._self._models
 
     @property
-    def tools(self) -> "ToolRegistry | None":
-        if self._self is not None:
-            return self._self._tools
-        return None
+    def tools(self) -> "ToolRegistry":
+        return self._self._tools
 
     def on(self, event: str, handler: Any) -> None:
-        if self._bus is not None:
-            self._bus.on(event, handler)
+        self._bus.on(event, handler)
 
     def off(self, event: str, handler: Any) -> None:
-        if self._bus is not None:
-            self._bus.off(event, handler)
+        self._bus.off(event, handler)
 
-    async def emit(self, name: str, job: Job | None = None, **data: Any) -> Event:
-        event = Event(name=name, job=job, data=data)
-        if self._bus is not None and self._self is not None:
-            await self._bus.emit(event, self)
-        return event
+    async def emit(self, event: str, job: Job | None = None, timeout: float = 120, **data: Any) -> Any:
+        # 转发 EventBus.emit；req: 前缀 → 请求-响应，否则 → 广播
+        return await self._bus.emit(event, job, timeout=timeout, ctx=self, **data)
 
 
 class AgentLoop:
@@ -186,7 +177,11 @@ class AgentLoop:
         job._task = asyncio.create_task(self._run_loop(job))
 
     async def _handle_command(self, job: Job) -> None:
-        await self.ctx.emit(f"cmd_{job.input.action if job.input else ''}", job=job)
+        await self.ctx.emit(
+            f"cmd_{job.input.action if job.input else ''}",
+            job=job,
+            **(job.input.data if job.input else {}),
+        )
 
     async def _run_loop(self, job: Job) -> None:
         ctx = self.ctx
@@ -201,9 +196,9 @@ class AgentLoop:
                     steering_messages=steering,
                     skills_prompt=self._skills.get_skills_prompt(),
                 )
-                job.status = "thinking"
                 await ctx.emit("turn_start", job=job)
                 await ctx.emit("llm_start", job=job)
+                job.status = "thinking"
 
                 messages = job.data.get("messages", [])
                 tools = self._tools.get_defs()
@@ -231,7 +226,7 @@ class AgentLoop:
 
                 if response.tool_calls:
                     job.status = "acting"
-                    await ctx.emit("tools_start", job=job)
+                    await ctx.emit("tools_start", job=job, tool_calls=response.tool_calls)
 
                     if response.finish_reason == "length":
                         logger.warning("Response truncated (length), auto-failing tool calls")
@@ -270,6 +265,10 @@ class AgentLoop:
             await ctx.emit("turn_end", job=job)
             await ctx.emit("job_end", job=job, reason="max_iterations")
 
+        except asyncio.CancelledError:
+            # 用户取消（cmd_cancel → Task.cancel）：有序收尾，不再向上传播
+            job.status = "cancelled"
+            await ctx.emit("job_end", job=job, reason="cancelled")
         except Exception as e:
             logger.exception("Error in agent loop, id=%s", job.id)
             job.status = "error"
@@ -288,9 +287,10 @@ class AgentLoop:
         job = evt.job
         if job is None:
             return
-        for j in self._jobs.values():
-            if j.session_id == job.session_id and j._task and not j._task.done():
-                j._task.cancel()
+        # 取消单个 job：Task.cancel() 注入 CancelledError，打断当前执行
+        target = self._jobs.get(job.id)
+        if target is not None and target._task is not None:
+            target._task.cancel()
 
     async def start(self) -> None:
         ctx = self.ctx
