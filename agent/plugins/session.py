@@ -43,6 +43,7 @@ class SessionPlugin(Plugin):
         ctx.on("tool_start", self._on_tool_start)
         ctx.on("tools_start", self._on_tools_start)
         ctx.on("tool_end", self._on_tool_end)
+        ctx.on("tool_error", self._on_tool_error)
         ctx.on("job_end", self._on_job_end)
         ctx.on("job_error", self._on_job_error)
         ctx.on("cmd_compress", self._on_compress)
@@ -181,6 +182,23 @@ class SessionPlugin(Plugin):
             await ctx.emit("msg_output", job=job)
 
         # Persist to session (for all jobs)
+        if tool_call:
+            state = self._get_or_load(job.id)
+            state.messages.append(ToolResult(content=result, tool_call_id=tool_call.id))
+            self._append(job.id, {
+                "role": "tool",
+                "content": result,
+                "tool_call_id": tool_call.id,
+            })
+
+    async def _on_tool_error(self, ctx: AgentContext, evt: Event) -> None:
+        # 工具未执行（被拒/被 fail）：持久化失败结果到 session，LLM 感知原因
+        job = evt.job
+        if job is None:
+            return
+        tool_call = evt.tool_call
+        error = evt.data.get("error", "")
+        result = f"Error: {error}"
         if tool_call:
             state = self._get_or_load(job.id)
             state.messages.append(ToolResult(content=result, tool_call_id=tool_call.id))

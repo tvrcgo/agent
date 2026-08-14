@@ -1,6 +1,28 @@
 # CHANGELOG
 > 新内容放前面，同一天内容合并；版本号和PR ID、Issue ID没有可省略
 
+## [unreleased] - 2026-08-12
+
+### 核心摘要
+工具执行守卫拆分为两个独立插件：`tool_guard`（审查+阻断）和 `confirm`（通用确认通道）。审计→确认全在 plugin 内闭环，loop 不感知。新增**请求-响应原语**（API 复用 `ctx.emit`/`on`，请求事件事件名带 `req:` 前缀）：`Request` 对象（`agent/core/events.py`）作为 `Event.request` 正式字段随事件传递，响应方**隐式返回**非 None 结果、由总线自动 `req.done(result)` 回填，结果封装在 Request 内部、不落 `job.data`。core 只做执行机制：`execute_batch` 纯执行、不做状态检查；阻断实现全在 `tool_guard`（审查→确认→剔除调用→emit `tool_error`）。
+
+### 变更
+- 新增：`tool_guard.py` 插件——审查清单 + flash LLM 风险判断，safe 放行 / dangerous 经 `req:request_confirm` 请求事件委托确认，deny 则写 `job.loop.tool_results`、从 `tool_calls` 剔除调用并 emit `tool_error`（阻断处理全在 plugin）
+- 新增：`confirm.py` 插件——两层请求-响应各持各的 req：第一层隐式返回 `request_confirm`（总线自动 done），第二层发 `confirm_ui` 并注册一次性 `cmd_confirm` 监听（闭包持有 req），收到决策显式 `req.done(...)` 后 `return await req.wait(...)`
+- 新增：`Request` 对象（`wait`/`done`）并入 `agent/core/events.py`，请求-响应与广播共享同一 EventBus，仅使用方式区分
+- 变更：`req:` 前缀判断、请求组合逻辑下沉 `EventBus.emit`，`ctx.emit` 纯转发，`emit` 时校验请求事件只允许单个 handler
+- 变更：`execute_batch` 回归纯执行——并行执行传入调用并各自 emit `tool_start`/`tool_end`，不做任何状态检查
+- 新增：`tool_error` 事件——工具未执行的异常情形（被守卫拒绝 / 被截断 fail）以此事件记录失败结果；`tool_start`/`tool_end` 只用于真实执行的生命周期，session 增加 `_on_tool_error` 持久化
+- 变更：`cmd_cancel` 改为取消**单个 job**（`Task.cancel()` 注入 `CancelledError`），`_run_loop` 捕获后置 `job.status = "cancelled"` 并 emit `job_end` 收尾；删除 loop 中散落的 `job.status` 检查锚点
+- 变更：`cmd_<action>` 事件携带 `job.input.data`（修复 confirm_id/decision 丢失）
+- 变更：6 个权限工具纯执行化——移除 `_request_confirm`/`force`/确认分支，保留敏感路径硬拦截
+- 新增：`loop.py` 中 `tools_start` emit 时带 `tool_calls`，ToolGuardPlugin 据此审计
+- 修复：`playground` 前端新增 `confirm_request` 消息分支，移除旧 `request_confirmation` 工具分支
+- 修复：`confirm` 闭包 `on_cmd` 签名补齐 `(ctx, evt)` 双参（此前单参导致 cmd_confirm 到达时抛 TypeError，决策无法回填）
+- 修复：`confirm` 闭包按 `job.id` 匹配（此前 `evt2.job is job` 对象同一性比较，cmd_confirm 携带新构造 Job 恒不匹配，approve/deny 只能靠超时兜底）
+- 移除：`agent/tools/confirm` 旧确认工具（已被 ConfirmPlugin + tool_guard 取代）
+- 文档：`AGENTS.md` 更新 request 原语、Confirm + Tool Guard 插件说明
+
 ## [unreleased] - 2026-08-10
 
 ### 核心摘要

@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-import asyncio
 import logging
-import uuid
 from typing import TYPE_CHECKING
 
 from agent.core.plugin import Plugin
-from agent.core.loop import AgentContext, Job, MessageEvent
 from agent.core.events import Event
+
+if TYPE_CHECKING:
+    from agent.core.loop import AgentContext, Job
 
 logger = logging.getLogger(__name__)
 
@@ -17,84 +17,59 @@ class ConfirmPlugin(Plugin):
     name = "confirm"
 
     def __init__(self) -> None:
-        self._pending: dict[str, tuple[asyncio.Event, str]] = {}
         self._timeout: float = 120
+        self._ctx: AgentContext | None = None
 
     def load(self, ctx: AgentContext, config: dict = {}) -> None:
-        self._timeout = float(config.get("confirm_timeout", 120))
-
-        ctx.on("tool_start", self._on_tool_start)
-        ctx.on("request_confirm", self._on_request_confirm)
-        ctx.on("cmd_confirm", self._on_command_confirm)
+        self._ctx = ctx
+        self._timeout = float(config.get("timeout", 120))
+        ctx.on("req:request_confirm", self._on_request_confirm)
+        ctx.on("req:confirm_ui", self._on_confirm_ui)
+        logger.info("ConfirmPlugin loaded: timeout=%ds", self._timeout)
 
     def unload(self) -> None:
-        self._pending.clear()
+        self._ctx = None
 
-    async def _on_tool_start(self, ctx: AgentContext, evt: Event) -> None:
+    async def _on_request_confirm(self, ctx: "AgentContext", evt: Event) -> None:
         job = evt.job
-        if job is None:
+        req = evt.request
+        if job is None or req is None:
             return
-        tool_call = evt.tool_call
-        if tool_call is None or tool_call.name != "request_confirmation":
+        # 第二层：向 UI 发起确认请求，阻塞等决策
+        decision = await ctx.emit(
+            "req:confirm_ui", job,
+            timeout=self._timeout,
+            confirm_id=req.id,
+            confirm_description=req.data.get("confirm_description", ""),
+        )
+        # 隐式返回，总线自动 req.done
+        return decision if decision is not None else {"decision": "deny"}
+
+    async def _on_confirm_ui(self, ctx: "AgentContext", evt: Event) -> None:
+        job = evt.job
+        ui_req = evt.request
+        if job is None or ui_req is None:
             return
+        confirm_id = ui_req.data.get("confirm_id", "")
 
-        wait_event = asyncio.Event()
-        self._pending[tool_call.id] = (wait_event, "")
+        async def on_cmd(ctx2: "AgentContext", evt2: Event) -> None:
+            # cmd_confirm 带的是新构造的 Job（id=session_id），按 id 匹配
+            if evt2.job is not None and evt2.job.id == job.id and evt2.data.get("confirm_id") == confirm_id:
+                ui_req.done({"decision": evt2.data.get("decision", "deny")})
 
+        ctx.on("cmd_confirm", on_cmd)
         try:
-            await asyncio.wait_for(wait_event.wait(), timeout=self._timeout)
-        except asyncio.TimeoutError:
-            logger.warning("Confirmation timed out after %ss for %s", self._timeout, tool_call.id)
-            evt.abort = True
-            evt.result = "Operation cancelled: confirmation timed out."
-        else:
-            _, decision = self._pending.pop(tool_call.id, (None, "deny"))
-            if decision == "deny":
-                evt.abort = True
-                evt.result = "Operation cancelled by user."
+            await self._push_confirm(job, confirm_id, ui_req.data.get("confirm_description", ""))
+            # 等待前端决策（on_cmd 显式 done），超时返回 None
+            return await ui_req.wait(self._timeout)
         finally:
-            self._pending.pop(tool_call.id, None)
+            ctx.off("cmd_confirm", on_cmd)
 
-    async def _on_request_confirm(self, ctx: AgentContext, evt: Event) -> None:
-        job = evt.job
-
-        confirm_id = evt.data.get("confirm_id", "")
-        if not confirm_id:
-            confirm_id = str(uuid.uuid4())[:8]
-            evt.confirm_id = confirm_id
-
-        description = evt.data.get("confirm_description", "")
-
-        if job is not None and job.output is not None:
-            job.output.events.append(
-                MessageEvent(
-                    type="confirm_request",
-                    data={"id": confirm_id, "description": description},
-                )
-            )
-            await ctx.emit("msg_output", job=job)
-
-        wait_event = asyncio.Event()
-        self._pending[confirm_id] = (wait_event, "")
-
-        try:
-            await asyncio.wait_for(wait_event.wait(), timeout=self._timeout)
-        except asyncio.TimeoutError:
-            logger.warning("Confirmation timed out after %ss for %s", self._timeout, confirm_id)
-            evt.confirm_decision = "deny"
-        else:
-            _, decision = self._pending.pop(confirm_id, (None, "deny"))
-            evt.confirm_decision = decision
-        finally:
-            self._pending.pop(confirm_id, None)
-
-    async def _on_command_confirm(self, ctx: AgentContext, evt: Event) -> None:
-        job = evt.job
-        if job is None:
-            return
-        confirm_id = evt.data.get("confirm_id", "")
-        decision = evt.data.get("decision", "deny")
-        if confirm_id in self._pending:
-            wait_event, _ = self._pending[confirm_id]
-            self._pending[confirm_id] = (wait_event, decision)
-            wait_event.set()
+    async def _push_confirm(self, job: Job, confirm_id: str, description: str) -> None:
+        if job.output is not None and self._ctx is not None:
+            from agent.core.loop import MessageEvent
+            job.output.events.append(MessageEvent(
+                type="confirm_request",
+                data={"id": confirm_id, "description": description},
+            ))
+            await self._ctx.emit("msg_output", job=job)

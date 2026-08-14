@@ -39,7 +39,7 @@ class Tool(ABC):
 
 
 def _validate_type(name: str, value: Any, schema: dict[str, Any]) -> Any:
-    """Validate and coerce a single value against its JSON Schema type definition."""
+    # 按 JSON Schema 校验并强制转换单个值
     expected_type = schema.get("type")
 
     if expected_type == "string":
@@ -105,12 +105,7 @@ def _validate_type(name: str, value: Any, schema: dict[str, Any]) -> Any:
 
 
 def validate_arguments(arguments: dict[str, Any], schema: dict[str, Any]) -> dict[str, Any]:
-    """Validate and coerce arguments against a parameter schema.
-
-    Checks required fields, validates types, applies defaults.
-    Raises ValueError on validation failure.
-    Returns sanitized arguments dict with defaults applied.
-    """
+    # 校验参数：检查必填、校验类型、应用默认值，失败抛 ValueError
     if not schema:
         return arguments
 
@@ -181,7 +176,7 @@ class ToolRegistry:
             self._tools[t.name] = t
             logger.info("Tool registered: %s", t.name)
     def unregister(self, name: str | list[str]) -> None:
-        """Remove tool(s) by name."""
+        # 按名移除工具
         names = [name] if isinstance(name, str) else name
         for n in names:
             if n in self._tools:
@@ -200,52 +195,37 @@ class ToolRegistry:
         tool_calls: list[ToolCall],
         job: Job,
     ) -> None:
-        """Validate and execute all tool calls concurrently.
-
-        All tool calls in the same LLM response are independent and
-        can be executed in parallel via asyncio.gather.
-        """
+        # 纯执行机制：并行执行传入的调用（阻断剔除由 plugin 在 tools_start 完成）
         if not tool_calls:
             return
         logger.debug("Executing %d tool calls in parallel", len(tool_calls))
         await asyncio.gather(*[self._execute_one(tc, job) for tc in tool_calls])
 
     async def _execute_one(self, tool_call: ToolCall, job: Job) -> None:
-        """Execute a single tool call: record → validate → execute → record result."""
-        if job.loop is not None:
-            job.loop.tool_calls.append(ToolCall(
-                id=tool_call.id,
-                name=tool_call.name,
-                arguments=tool_call.arguments,
-            ))
+        # 单工具执行：通知开始 → 校验 → 执行 → 追加结果 → emit tool_end
+        ctx = self._ctx
+        await ctx.emit("tool_start", job=job, tool_call=tool_call)
 
         result = ""
         error = ""
 
-        ctx = self._ctx
-        evt = await ctx.emit("tool_start", job=job, tool_call=tool_call)
-
-        if evt.data.get("abort"):
-            result = evt.data.get("result", "Operation cancelled.")
-            error = result
-        else:
-            try:
-                tool = self.get(tool_call.name)
-                if tool is None:
-                    result = f"Error: unknown tool '{tool_call.name}'"
+        try:
+            tool = self.get(tool_call.name)
+            if tool is None:
+                result = f"Error: unknown tool '{tool_call.name}'"
+                error = result
+            else:
+                try:
+                    validated = validate_arguments(tool_call.arguments, tool.parameters)
+                except ValueError as e:
+                    result = f"Error: {e}"
                     error = result
                 else:
-                    try:
-                        validated = validate_arguments(tool_call.arguments, tool.parameters)
-                    except ValueError as e:
-                        result = f"Error: {e}"
-                        error = result
-                    else:
-                        result = await tool.execute(validated, ctx=ctx, job=job)
-            except Exception as e:
-                logger.exception("Tool execution error: %s", tool_call.name)
-                result = str(e)
-                error = result
+                    result = await tool.execute(validated, ctx=ctx, job=job)
+        except Exception as e:
+            logger.exception("Tool execution error: %s", tool_call.name)
+            result = str(e)
+            error = result
 
         if job.loop is not None:
             job.loop.tool_results.append(ToolResult(
@@ -258,14 +238,7 @@ class ToolRegistry:
         await ctx.emit("tool_end", job=job, tool_call=tool_call, result=result, error=error)
 
     async def fail_tool_call(self, tool_call: ToolCall, job: Job, reason: str) -> None:
-        """Record a tool call as failed without executing it."""
-        if job.loop is not None:
-            job.loop.tool_calls.append(ToolCall(
-                id=tool_call.id,
-                name=tool_call.name,
-                arguments=tool_call.arguments,
-            ))
-
+        # 工具未执行（异常）：记录结果并 emit tool_error，不触发 tool_start/tool_end
         result = f"Error: {reason}"
         if job.loop is not None:
             job.loop.tool_results.append(ToolResult(
@@ -274,6 +247,8 @@ class ToolRegistry:
                 content=result,
                 error=result,
             ))
+
+        await self._ctx.emit("tool_error", job=job, tool_call=tool_call, error=reason)
 
     @staticmethod
     def _check_deps(name: str, tools_dir: Path) -> None:

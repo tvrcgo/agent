@@ -57,9 +57,15 @@ plugins:
       compress_threshold: 0.9
       compress_keep_recent: 5
       system_prompt_path: agent/AGENTS.md
-
   - subjob:
       max_depth: 2
   - logging
+  - confirm:
+      timeout: 120
+  - tool_guard:
+      review_tools:
+        - shell
+        - write_file
+        - edit_file
   - mcp:
       base_url: http://mcp:8001

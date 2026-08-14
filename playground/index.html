@@ -968,16 +968,10 @@ function ensureConnection(sessionId) {
       case 'data':
         const innerData = d.data || {};
         if (innerData.name === 'tool_call') {
-          if (innerData.tool === 'request_confirmation') {
-            const content = (innerData.arguments || {}).description || 'Proceed?';
-            await appendMessage(sessionId, 'confirm', content, { id: innerData.id });
-            if (isCurrent) renderMessage('confirm', content, { id: innerData.id });
-          } else {
-            const content = `${innerData.tool}(${JSON.stringify(innerData.arguments || {})})`;
-            const meta = { id: innerData.id, name: innerData.tool, arguments: innerData.arguments || {} };
-            await appendMessage(sessionId, 'tool_call', content, meta);
-            if (isCurrent) renderMessage('tool_call', content, meta);
-          }
+          const content = `${innerData.tool}(${JSON.stringify(innerData.arguments || {})})`;
+          const meta = { id: innerData.id, name: innerData.tool, arguments: innerData.arguments || {} };
+          await appendMessage(sessionId, 'tool_call', content, meta);
+          if (isCurrent) renderMessage('tool_call', content, meta);
         } else if (innerData.name === 'tool_result') {
           const resultContent = formatResult(innerData.result, innerData.error);
           const resultMeta = { id: innerData.id, name: innerData.tool };
@@ -988,6 +982,13 @@ function ensureConnection(sessionId) {
           if (isCurrent) renderJobTree(sessionId);
         }
         break;
+      case 'confirm_request': {
+        const confData = d.data || {};
+        const content = confData.description || 'Proceed?';
+        await appendMessage(sessionId, 'confirm', content, { id: confData.id });
+        if (isCurrent) renderMessage('confirm', content, { id: confData.id });
+        break;
+      }
       case 'message':
         await appendMessage(sessionId, 'message', d.content || '', {});
         if (isCurrent) renderMessage('message', d.content || '', {});
