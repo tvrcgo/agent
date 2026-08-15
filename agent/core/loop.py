@@ -60,7 +60,7 @@ class InputMessage:
 
 
 @dataclass
-class LoopData:
+class Turn:
     thinking: str = ""
     tool_results: list[ToolResult] = field(default_factory=list)
     steering_messages: list[str] = field(default_factory=list)
@@ -71,7 +71,7 @@ class LoopData:
 class OutputMessage:
     session_id: str = ""
     content: str = ""
-    loops: list[LoopData] = field(default_factory=list)
+    turns: list[Turn] = field(default_factory=list)
     events: list[Any] = field(default_factory=list)
 
 
@@ -82,7 +82,7 @@ class Job:
     status: str
     input: InputMessage | None = None
     output: OutputMessage | None = None
-    loop: LoopData | None = None
+    turn: Turn | None = None
     data: dict[str, Any] = field(default_factory=dict)
     _task: asyncio.Task[None] | None = field(default=None, repr=False)
 
@@ -190,7 +190,7 @@ class AgentLoop:
                 q = self._message_queues[job.id]
                 steering = q.drain()
 
-                job.loop = LoopData(steering_messages=steering)
+                job.turn = Turn(steering_messages=steering)
                 await ctx.emit("turn_start", job=job)
                 await ctx.emit("llm_start", job=job)
                 job.status = "thinking"
@@ -217,7 +217,7 @@ class AgentLoop:
                 await ctx.emit("llm_end", job=job, response=response)
 
                 if response.thinking:
-                    job.loop.thinking = response.thinking
+                    job.turn.thinking = response.thinking
 
                 if response.tool_calls:
                     job.status = "acting"
@@ -230,8 +230,8 @@ class AgentLoop:
                     else:
                         await self._tools.execute_batch(response.tool_calls, job)
 
-                    if job.output is not None and job.loop is not None:
-                        job.output.loops.append(job.loop)
+                    if job.output is not None and job.turn is not None:
+                        job.output.turns.append(job.turn)
                     await ctx.emit("tools_end", job=job)
                     await ctx.emit("turn_end", job=job)
                     continue
@@ -240,8 +240,8 @@ class AgentLoop:
                     if job.output:
                         job.output.content = response.text
 
-                if job.output is not None and job.loop is not None:
-                    job.output.loops.append(job.loop)
+                if job.output is not None and job.turn is not None:
+                    job.output.turns.append(job.turn)
 
                 # follow-up
                 q = self._message_queues[job.id]

@@ -4,11 +4,11 @@
 ## [unreleased] - 2026-08-15
 
 ### 核心摘要
-技能（skill）从 core 组件变为独立插件：`agent/core/skill.py` 整体迁入 `agent/plugins/skill.py`（`SkillPlugin`），core 不再感知技能。新增 `LoopData.prompts` 通用提示段收集机制：插件在 `turn_start` 追加提示段，SessionPlugin 在 `llm_start` 将每条提示段各成一条 SystemMessage 插在系统提示词之后（session 不感知 skill 语义，利用事件先后顺序天然保证正确性，规避广播 handler 并发无序的竞态）。
+技能（skill）从 core 组件变为独立插件：`agent/core/skill.py` 整体迁入 `agent/plugins/skill.py`（`SkillPlugin`），core 不再感知技能。新增 `Turn.prompts` 通用提示段收集机制：插件在 `turn_start` 追加提示段，SessionPlugin 在 `llm_start` 将每条提示段各成一条 SystemMessage 插在系统提示词之后（session 不感知 skill 语义，利用事件先后顺序天然保证正确性，规避广播 handler 并发无序的竞态）。
 
 ### 变更
-- 新增：`skill.py` 插件——`Skill`/`SkillRegistry` 迁入，`load(ctx, config)` 读 `dirs` 配置（默认 `agent/skills`、`skills`）加载 SKILL.md，注册 `turn_start` 追加提示段到 `job.loop.prompts`
-- 新增：`LoopData.prompts` 通用提示段收集字段（每轮重建），供任意插件在 `turn_start` 追加、session 在 `llm_start` 统一合并拼入单条 system message（保证模型对多条 system 的兼容）
+- 新增：`skill.py` 插件——`Skill`/`SkillRegistry` 迁入，`load(ctx, config)` 读 `dirs` 配置（默认 `agent/skills`、`skills`）加载 SKILL.md，注册 `turn_start` 追加提示段到 `job.turn.prompts`
+- 新增：`Turn.prompts` 通用提示段收集字段（每轮重建），供任意插件在 `turn_start` 追加、session 在 `llm_start` 统一合并拼入单条 system message（保证模型对多条 system 的兼容）
 - 移除：`agent/core/skill.py`；`AgentLoop` 删除 `SkillRegistry` 实例与 `load_skills` 调用
 - 变更：SessionPlugin 当前时间注入与提示段同机制——`turn_start` 追加 `Current time` 提示段，`llm_start` 与基础系统提示词合并组装
 - 变更：`config.yml` plugins 增加 `skill`
@@ -21,7 +21,7 @@
 工具执行守卫拆分为两个独立插件：`tool_guard`（审查+阻断）和 `confirm`（通用确认通道）。审计→确认全在 plugin 内闭环，loop 不感知。新增**请求-响应原语**（API 复用 `ctx.emit`/`on`，请求事件事件名带 `req:` 前缀）：`Request` 对象（`agent/core/events.py`）作为 `Event.request` 正式字段随事件传递，响应方**隐式返回**非 None 结果、由总线自动 `req.done(result)` 回填，结果封装在 Request 内部、不落 `job.data`。core 只做执行机制：`execute_batch` 纯执行、不做状态检查；阻断实现全在 `tool_guard`（审查→确认→剔除调用→emit `tool_error`）。
 
 ### 变更
-- 新增：`tool_guard.py` 插件——审查清单 + flash LLM 风险判断，safe 放行 / dangerous 经 `req:request_confirm` 请求事件委托确认，deny 则写 `job.loop.tool_results`、从 `tool_calls` 剔除调用并 emit `tool_error`（阻断处理全在 plugin）
+- 新增：`tool_guard.py` 插件——审查清单 + flash LLM 风险判断，safe 放行 / dangerous 经 `req:request_confirm` 请求事件委托确认，deny 则写 `job.turn.tool_results`、从 `tool_calls` 剔除调用并 emit `tool_error`（阻断处理全在 plugin）
 - 新增：`confirm.py` 插件——两层请求-响应各持各的 req：第一层隐式返回 `request_confirm`（总线自动 done），第二层发 `confirm_ui` 并注册一次性 `cmd_confirm` 监听（闭包持有 req），收到决策显式 `req.done(...)` 后 `return await req.wait(...)`
 - 新增：`Request` 对象（`wait`/`done`）并入 `agent/core/events.py`，请求-响应与广播共享同一 EventBus，仅使用方式区分
 - 变更：`req:` 前缀判断、请求组合逻辑下沉 `EventBus.emit`，`ctx.emit` 纯转发，`emit` 时校验请求事件只允许单个 handler

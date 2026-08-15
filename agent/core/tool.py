@@ -227,8 +227,8 @@ class ToolRegistry:
             result = str(e)
             error = result
 
-        if job.loop is not None:
-            job.loop.tool_results.append(ToolResult(
+        if job.turn is not None:
+            job.turn.tool_results.append(ToolResult(
                 tool_call_id=tool_call.id,
                 name=tool_call.name,
                 content=result,
@@ -240,8 +240,8 @@ class ToolRegistry:
     async def fail_tool_call(self, tool_call: ToolCall, job: Job, reason: str) -> None:
         # 工具未执行（异常）：记录结果并 emit tool_error，不触发 tool_start/tool_end
         result = f"Error: {reason}"
-        if job.loop is not None:
-            job.loop.tool_results.append(ToolResult(
+        if job.turn is not None:
+            job.turn.tool_results.append(ToolResult(
                 tool_call_id=tool_call.id,
                 name=tool_call.name,
                 content=result,

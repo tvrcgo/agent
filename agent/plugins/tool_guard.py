@@ -78,8 +78,8 @@ class ToolGuardPlugin(Plugin):
         # 未执行不触发 tool_start/tool_end；结果写 tool_results + emit tool_error 供 session 持久化
         for tc in blocked:
             reason = f"Tool '{tc.name}' execution denied by user."
-            if job.loop is not None:
-                job.loop.tool_results.append(ToolResult(
+            if job.turn is not None:
+                job.turn.tool_results.append(ToolResult(
                     tool_call_id=tc.id,
                     name=tc.name,
                     error=reason,
@@ -92,7 +92,7 @@ class ToolGuardPlugin(Plugin):
                 pass
 
     async def _review(self, flash, tool_name: str, arguments: dict, job) -> str:
-        user_msgs = job.loop.steering_messages if job.loop else []
+        user_msgs = job.turn.steering_messages if job.turn else []
         user_msg = user_msgs[-1] if user_msgs else ""
         review_msg = (
             f"{self._review_prompt}\n\n"

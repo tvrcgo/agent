@@ -97,8 +97,8 @@ class SkillPlugin(Plugin):
 
     async def _on_turn_start(self, ctx: AgentContext, evt: Event) -> None:
         job = evt.job
-        if job is None or job.loop is None:
+        if job is None or job.turn is None:
             return
         prompt = self._registry.get_skills_prompt()
         if prompt:
-            job.loop.prompts.append(prompt)
+            job.turn.prompts.append(prompt)

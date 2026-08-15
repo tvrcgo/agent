@@ -4,7 +4,7 @@
 
 - SkillPlugin 加载/卸载
 - SKILL.md 解析
-- turn_start 追加提示段到 job.loop.prompts
+- turn_start 追加提示段到 job.turn.prompts
 
 ## 测试用例
 
@@ -52,7 +52,7 @@ def test_skill_from_md(tmp_path):
 ### 3. turn_start 追加提示段
 
 ```python
-from agent.core.loop import AgentLoop, Job, LoopData
+from agent.core.loop import AgentLoop, Job, Turn
 from agent.plugins.skill import SkillPlugin
 
 async def test_skill_prompt_injected():
@@ -61,11 +61,11 @@ async def test_skill_prompt_injected():
     plugin.load(loop.ctx, {"dirs": ["agent/skills", "skills"]})
 
     job = Job(id="j1", session_id="j1", status="pending")
-    job.loop = LoopData()
+    job.turn = Turn()
     await loop.ctx.emit("turn_start", job=job)
 
-    assert job.loop.prompts
-    assert "##" in job.loop.prompts[0]
+    assert job.turn.prompts
+    assert "##" in job.turn.prompts[0]
 
     plugin.unload()
 ```

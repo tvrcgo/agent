@@ -9,7 +9,7 @@
 - **事件总线** (`events.py`)：agent 级基础消息机制。`Event{name, job, data}` 数据类（`data` 读写对称：`evt.field` 读 / `evt.field = value` 写都代理到 data）+ `EventBus`（订阅 `on`、退订 `off`、发布 `emit`），插件和任何组件通过 `ctx.on`/`ctx.emit` 交流
 - **插件** (`plugin.py`)：插件容器，插件在 `load` 时通过 `ctx.on` 注册事件 handler，`PluginRegistry` 只负责插件实例的加载与卸载
 - **工具** (`tool.py`)：可执行工具的抽象基类和注册表，从 `agent/tools/` 加载 Tool 子类。`config.yml` 中 tools 列表支持字符串或带参数的 dict 格式，参数通过 `Tool.config` 传递给工具实例
-- **技能插件** (`plugins/skill.py`)：SKILL.md 指令模板，从技能目录加载（默认 `agent/skills/`、`skills/`，config 可覆盖），`turn_start` 把技能提示词追加到 `job.loop.prompts`，由 SessionPlugin 在 `llm_start` 统一合并拼入系统提示词（当前时间等提示段同机制：`turn_start` 追加、`llm_start` 组装，合并为单条 system message 保证模型兼容）
+- **技能插件** (`plugins/skill.py`)：SKILL.md 指令模板，从技能目录加载（默认 `agent/skills/`、`skills/`，config 可覆盖），`turn_start` 把技能提示词追加到 `job.turn.prompts`，由 SessionPlugin 在 `llm_start` 统一合并拼入系统提示词（当前时间等提示段同机制：`turn_start` 追加、`llm_start` 组装，合并为单条 system message 保证模型兼容）
 
 ## 核心概念
 
@@ -40,7 +40,7 @@ job 运行中收到的 chat 消息排队，下轮迭代开始前由 loop 写入 
 
 #### 工具执行阻断
 
-core 只提供执行机制，阻断实现交给 plugin。`ToolRegistry.execute_batch`（core）：纯执行——并行执行传入的工具调用，各自 emit `tool_start`/`tool_end`；不做任何状态检查。`tool_guard`（plugin）：在 `tools_start` 审查 → 确认 → deny 则**结果写 `job.loop.tool_results`**、**从 `tool_calls` 剔除该调用**、并 emit `tool_error`——被阻断的调用不会进入 `execute_batch`，失败原因供 session 持久化（LLM 下一轮可感知）。取消：`cmd_cancel` 取消**单个 job**，经 `Task.cancel()` 注入 `CancelledError` 打断当前执行，`_run_loop` 捕获后置 `job.status = "cancelled"` 并 emit `job_end` 有序收尾。
+core 只提供执行机制，阻断实现交给 plugin。`ToolRegistry.execute_batch`（core）：纯执行——并行执行传入的工具调用，各自 emit `tool_start`/`tool_end`；不做任何状态检查。`tool_guard`（plugin）：在 `tools_start` 审查 → 确认 → deny 则**结果写 `job.turn.tool_results`**、**从 `tool_calls` 剔除该调用**、并 emit `tool_error`——被阻断的调用不会进入 `execute_batch`，失败原因供 session 持久化（LLM 下一轮可感知）。取消：`cmd_cancel` 取消**单个 job**，经 `Task.cancel()` 注入 `CancelledError` 打断当前执行，`_run_loop` 捕获后置 `job.status = "cancelled"` 并 emit `job_end` 有序收尾。
 
 #### Confirm Plugin
 
@@ -66,7 +66,7 @@ plugins:
       review_prompt: ...            # flash 判断提示词（可选）
 ```
 
-审查链路：工具在 `review_tools` 中 → flash LLM 判断风险 → safe 放行 / dangerous → `await ctx.emit("req:request_confirm", ...)` → ConfirmPlugin 推送确认 → deny 则**结果写 `job.loop.tool_results`、从 `tool_calls` 剔除调用、emit `tool_error`**（plugin 实现）——被阻断的调用不会进入 `execute_batch`。
+审查链路：工具在 `review_tools` 中 → flash LLM 判断风险 → safe 放行 / dangerous → `await ctx.emit("req:request_confirm", ...)` → ConfirmPlugin 推送确认 → deny 则**结果写 `job.turn.tool_results`、从 `tool_calls` 剔除调用、emit `tool_error`**（plugin 实现）——被阻断的调用不会进入 `execute_batch`。
 
 ### MCP Plugin
 MCP 作为插件，通过 HTTP 从 agent-mcp 服务同步工具。agent-mcp 运行在独立容器（`services/mcp/`），管理 Node.js MCP servers。插件每 10 分钟同步一次，移除失效 tools、注册新增 tools。工具命名格式为 `mcp_{server}_{tool}`。

@@ -86,12 +86,12 @@ class SessionPlugin(Plugin):
         self._append(job.id, {"role": "user", "content": content})
 
     async def _on_turn_start(self, ctx: AgentContext, evt: Event) -> None:
-        # 当前时间作为提示段追加到 job.loop.prompts
+        # 当前时间作为提示段追加到 job.turn.prompts
         job = evt.job
-        if job is None or job.loop is None:
+        if job is None or job.turn is None:
             return
         now = datetime.now().strftime("%Y-%m-%d %A %H:%M:%S")
-        job.loop.prompts.append(f"Current time: {now}")
+        job.turn.prompts.append(f"Current time: {now}")
 
     async def _on_llm_start(self, ctx: AgentContext, evt: Event) -> None:
         job = evt.job
@@ -116,16 +116,16 @@ class SessionPlugin(Plugin):
             await self._compress(ctx, state, job)
 
         # Only root job consumes queued messages
-        if job.id == job.session_id and job.loop and job.loop.steering_messages:
-            for content in job.loop.steering_messages:
+        if job.id == job.session_id and job.turn and job.turn.steering_messages:
+            for content in job.turn.steering_messages:
                 state.messages.append(UserMessage(content=content))
                 self._append(job.id, {"role": "user", "content": content})
 
         msgs = self._get_messages(state)
 
         # 插件在 turn_start 追加的提示段（当前时间、技能等），统一合并拼入系统提示词
-        if job.loop and job.loop.prompts:
-            extras = "\n\n".join(job.loop.prompts)
+        if job.turn and job.turn.prompts:
+            extras = "\n\n".join(job.turn.prompts)
             msgs[0] = SystemMessage(content=msgs[0].content + "\n\n" + extras)
 
         job.data["messages"] = msgs
