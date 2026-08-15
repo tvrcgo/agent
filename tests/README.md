@@ -5,6 +5,7 @@
 - [单元测试 — SessionPlugin](cases/unit-session.md)
 - [单元测试 — ConfirmPlugin](cases/unit-plugins.md)
 - [单元测试 — MCP](cases/unit-mcp.md)
+- [单元测试 — SkillPlugin](cases/unit-skill.md)
 - [集成测试 — WebSocket 协议](cases/integration-ws.md)
 
 ## 测试脚本

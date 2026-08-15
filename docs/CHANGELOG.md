@@ -1,6 +1,20 @@
 # CHANGELOG
 > 新内容放前面，同一天内容合并；版本号和PR ID、Issue ID没有可省略
 
+## [unreleased] - 2026-08-15
+
+### 核心摘要
+技能（skill）从 core 组件变为独立插件：`agent/core/skill.py` 整体迁入 `agent/plugins/skill.py`（`SkillPlugin`），core 不再感知技能。新增 `LoopData.prompts` 通用提示段收集机制：插件在 `turn_start` 追加提示段，SessionPlugin 在 `llm_start` 将每条提示段各成一条 SystemMessage 插在系统提示词之后（session 不感知 skill 语义，利用事件先后顺序天然保证正确性，规避广播 handler 并发无序的竞态）。
+
+### 变更
+- 新增：`skill.py` 插件——`Skill`/`SkillRegistry` 迁入，`load(ctx, config)` 读 `dirs` 配置（默认 `agent/skills`、`skills`）加载 SKILL.md，注册 `turn_start` 追加提示段到 `job.loop.prompts`
+- 新增：`LoopData.prompts` 通用提示段收集字段（每轮重建），供任意插件在 `turn_start` 追加、session 在 `llm_start` 统一合并拼入单条 system message（保证模型对多条 system 的兼容）
+- 移除：`agent/core/skill.py`；`AgentLoop` 删除 `SkillRegistry` 实例与 `load_skills` 调用
+- 变更：SessionPlugin 当前时间注入与提示段同机制——`turn_start` 追加 `Current time` 提示段，`llm_start` 与基础系统提示词合并组装
+- 变更：`config.yml` plugins 增加 `skill`
+- 文档：`tests/cases/unit-mcp.md` 整篇更新为当前 `AgentLoop(config)` 签名，新增 `tests/cases/unit-skill.md`
+- 文档：`AGENTS.md` 技能描述改为插件
+
 ## [unreleased] - 2026-08-12
 
 ### 核心摘要

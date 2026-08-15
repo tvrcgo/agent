@@ -4,12 +4,12 @@
 
 ## 分层
 
-- **入口** (`__main__.py`)：加载配置、创建 `AgentLoop` 并启动/停止；所有组件（models/总线/tools/skills/plugins）由 `AgentLoop.start()` 统一加载
+- **入口** (`__main__.py`)：加载配置、创建 `AgentLoop` 并启动/停止；所有组件（models/总线/tools/plugins）由 `AgentLoop.start()` 统一加载
 - **推理循环** (`loop.py`)：Think→Act→Observe 循环，每个 WebSocket 会话一个 asyncio Task。loop.py 只做核心调度，功能扩展通过事件钩子实现，禁止在其中添加业务逻辑
 - **事件总线** (`events.py`)：agent 级基础消息机制。`Event{name, job, data}` 数据类（`data` 读写对称：`evt.field` 读 / `evt.field = value` 写都代理到 data）+ `EventBus`（订阅 `on`、退订 `off`、发布 `emit`），插件和任何组件通过 `ctx.on`/`ctx.emit` 交流
 - **插件** (`plugin.py`)：插件容器，插件在 `load` 时通过 `ctx.on` 注册事件 handler，`PluginRegistry` 只负责插件实例的加载与卸载
 - **工具** (`tool.py`)：可执行工具的抽象基类和注册表，从 `agent/tools/` 加载 Tool 子类。`config.yml` 中 tools 列表支持字符串或带参数的 dict 格式，参数通过 `Tool.config` 传递给工具实例
-- **技能** (`skill.py`)：SKILL.md 指令模板，从 `agent/skills/` 和 `skills/` 加载，注入系统提示词
+- **技能插件** (`plugins/skill.py`)：SKILL.md 指令模板，从技能目录加载（默认 `agent/skills/`、`skills/`，config 可覆盖），`turn_start` 把技能提示词追加到 `job.loop.prompts`，由 SessionPlugin 在 `llm_start` 统一合并拼入系统提示词（当前时间等提示段同机制：`turn_start` 追加、`llm_start` 组装，合并为单条 system message 保证模型兼容）
 
 ## 核心概念
 
@@ -102,7 +102,7 @@ plugins:
 
 ### 架构规范
 
-- 按架构分层，模块只能向下或同级引用，不能上向引用（core 中的模块引用 plugins, skills 中的模块）
+- 按架构分层，模块只能向下或同级引用，不能上向引用（core 中的模块引用 plugins 中的模块）
 - **`loop.py` 是核心流程，不能随便修改**，对 loop 功能的扩展，都用事件+插件的方式实现；如果事件不够可新增，但事件名要符合 loop 流程的语义，可复用
 - plugin 之间不能相互依赖，通过 `ctx.on`/`ctx.emit` 经事件总线交流
 - 组件间共享状态一律走事件（`Event.data` 或 per-job 的 `job.data`），不使用 `ctx.data` 动态属性

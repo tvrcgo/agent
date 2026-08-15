@@ -11,7 +11,6 @@ from agent.core.config import Config
 from agent.core.events import Event, EventBus
 from agent.core.model import ModelRegistry, ModelResponse, StreamChunk, ToolResult
 from agent.core.plugin import PluginRegistry
-from agent.core.skill import SkillRegistry
 from agent.core.tool import ToolRegistry
 
 logger = logging.getLogger(__name__)
@@ -65,7 +64,7 @@ class LoopData:
     thinking: str = ""
     tool_results: list[ToolResult] = field(default_factory=list)
     steering_messages: list[str] = field(default_factory=list)
-    skills_prompt: str = ""
+    prompts: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -127,7 +126,6 @@ class AgentLoop:
             _self=self,
         )
         self._models = ModelRegistry(config.model)
-        self._skills = SkillRegistry()
         self._tools = ToolRegistry(self._ctx)
         self._plugins = PluginRegistry(self._ctx)
         self._jobs: dict[str, Job] = {}
@@ -192,10 +190,7 @@ class AgentLoop:
                 q = self._message_queues[job.id]
                 steering = q.drain()
 
-                job.loop = LoopData(
-                    steering_messages=steering,
-                    skills_prompt=self._skills.get_skills_prompt(),
-                )
+                job.loop = LoopData(steering_messages=steering)
                 await ctx.emit("turn_start", job=job)
                 await ctx.emit("llm_start", job=job)
                 job.status = "thinking"
@@ -300,8 +295,6 @@ class AgentLoop:
 
         if self._config.tools:
             self._tools.load_modules(self._config.tools)
-        self._skills.load_skills("agent/skills", "skills")
-
         if self._config.plugins:
             self._plugins.load_modules(self._config.plugins)
 

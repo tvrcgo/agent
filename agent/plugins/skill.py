@@ -3,10 +3,19 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import yaml
 
+from agent.core.events import Event
+from agent.core.plugin import Plugin
+
+if TYPE_CHECKING:
+    from agent.core.loop import AgentContext
+
 logger = logging.getLogger(__name__)
+
+DEFAULT_SKILL_DIRS = ["agent/skills", "skills"]
 
 
 @dataclass
@@ -62,7 +71,34 @@ class SkillRegistry:
                 self._skills[sk.name] = sk
                 logger.info("Skill loaded: %s (%s)", sk.name, entry)
 
+    def clear(self) -> None:
+        self._skills.clear()
+
     def get_skills_prompt(self) -> str:
         if not self._skills:
             return ""
         return "\n\n---\n\n".join(sk.as_prompt() for sk in self._skills.values())
+
+
+class SkillPlugin(Plugin):
+    name = "skill"
+
+    def __init__(self) -> None:
+        self._registry = SkillRegistry()
+
+    def load(self, ctx: AgentContext, config: dict = {}) -> None:
+        dirs = config.get("dirs", DEFAULT_SKILL_DIRS)
+        self._registry.load_skills(*dirs)
+        ctx.on("turn_start", self._on_turn_start)
+        logger.info("SkillPlugin loaded, dirs=%s", dirs)
+
+    def unload(self) -> None:
+        self._registry.clear()
+
+    async def _on_turn_start(self, ctx: AgentContext, evt: Event) -> None:
+        job = evt.job
+        if job is None or job.loop is None:
+            return
+        prompt = self._registry.get_skills_prompt()
+        if prompt:
+            job.loop.prompts.append(prompt)

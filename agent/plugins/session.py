@@ -38,6 +38,7 @@ class SessionPlugin(Plugin):
 
     def load(self, ctx: AgentContext, config: dict = {}) -> None:
         ctx.on("job_start", self._on_job_start)
+        ctx.on("turn_start", self._on_turn_start)
         ctx.on("llm_start", self._on_llm_start)
         ctx.on("llm_end", self._on_llm_end)
         ctx.on("tool_start", self._on_tool_start)
@@ -84,6 +85,14 @@ class SessionPlugin(Plugin):
         state.messages.append(UserMessage(content=content))
         self._append(job.id, {"role": "user", "content": content})
 
+    async def _on_turn_start(self, ctx: AgentContext, evt: Event) -> None:
+        # 当前时间作为提示段追加到 job.loop.prompts
+        job = evt.job
+        if job is None or job.loop is None:
+            return
+        now = datetime.now().strftime("%Y-%m-%d %A %H:%M:%S")
+        job.loop.prompts.append(f"Current time: {now}")
+
     async def _on_llm_start(self, ctx: AgentContext, evt: Event) -> None:
         job = evt.job
         if job is None or job.output is None:
@@ -113,11 +122,11 @@ class SessionPlugin(Plugin):
                 self._append(job.id, {"role": "user", "content": content})
 
         msgs = self._get_messages(state)
-        now = datetime.now().strftime("%Y-%m-%d %A %H:%M:%S")
-        msgs[0] = SystemMessage(content=msgs[0].content + f"\n\nCurrent time: {now}")
 
-        if job.loop and job.loop.skills_prompt:
-            msgs[0] = SystemMessage(content=msgs[0].content + "\n\n" + job.loop.skills_prompt)
+        # 插件在 turn_start 追加的提示段（当前时间、技能等），统一合并拼入系统提示词
+        if job.loop and job.loop.prompts:
+            extras = "\n\n".join(job.loop.prompts)
+            msgs[0] = SystemMessage(content=msgs[0].content + "\n\n" + extras)
 
         job.data["messages"] = msgs
 
