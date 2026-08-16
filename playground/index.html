@@ -874,13 +874,15 @@ function setConnected(connected) {
 // === Session selection ===
 
 function selectSession(sessionId) {
-  if (currentSessionId === sessionId) return;
+  const same = currentSessionId === sessionId;
 
-  // Reset streaming element when switching sessions
-  _streamingEl = null;
+  if (!same) {
+    // Reset streaming element when switching sessions
+    _streamingEl = null;
 
-  // Keep old connection alive — don't disconnect
-  currentSessionId = sessionId;
+    // Keep old connection alive — don't disconnect
+    currentSessionId = sessionId;
+  }
 
   const session = getSession(sessionId);
   $currentTitle.textContent = session ? session.title : '';
@@ -894,7 +896,7 @@ function selectSession(sessionId) {
   renderMessages(sessionId);
   renderJobTree(sessionId);
 
-  // Ensure connection for this session
+  // Ensure connection for this session (also reconnects if current one dropped)
   ensureConnection(sessionId);
 
   // Enable input based on connection state
@@ -927,7 +929,8 @@ const _jobTrees = new Map();              // sessionId -> jobs[]
 let _streamingEl = null;                  // current streaming message element
 
 function ensureConnection(sessionId) {
-  if (_connections.has(sessionId)) return;
+  const existing = _connections.get(sessionId);
+  if (existing && (existing.readyState === WebSocket.CONNECTING || existing.readyState === WebSocket.OPEN)) return;
   const url = `${WS_URL}?session_id=${encodeURIComponent(sessionId)}`;
 
   let ws;
@@ -948,7 +951,10 @@ function ensureConnection(sessionId) {
   };
 
   ws.onclose = () => {
-    _connections.delete(sessionId);
+    // Only clean up if this is still the current connection (a newer one may have replaced it)
+    if (_connections.get(sessionId) === ws) {
+      _connections.delete(sessionId);
+    }
     if (sessionId === currentSessionId) {
       setConnected(false);
       $sendBtn.disabled = true;
