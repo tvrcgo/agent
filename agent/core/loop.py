@@ -9,7 +9,7 @@ from typing import Any
 
 from agent.core.config import Config
 from agent.core.events import Event, EventBus
-from agent.core.model import ModelRegistry, ModelResponse, StreamChunk, ToolResult
+from agent.core.model import ModelRegistry, ModelResponse, StreamChunk
 from agent.core.plugin import PluginRegistry
 from agent.core.tool import ToolRegistry
 
@@ -61,8 +61,6 @@ class InputMessage:
 
 @dataclass
 class Turn:
-    thinking: str = ""
-    tool_results: list[ToolResult] = field(default_factory=list)
     steering_messages: list[str] = field(default_factory=list)
     prompts: list[str] = field(default_factory=list)
 
@@ -71,7 +69,6 @@ class Turn:
 class OutputMessage:
     session_id: str = ""
     content: str = ""
-    turns: list[Turn] = field(default_factory=list)
     events: list[Any] = field(default_factory=list)
 
 
@@ -216,9 +213,6 @@ class AgentLoop:
                     )
                 await ctx.emit("llm_end", job=job, response=response)
 
-                if response.thinking:
-                    job.turn.thinking = response.thinking
-
                 if response.tool_calls:
                     job.status = "acting"
                     await ctx.emit("tools_start", job=job, tool_calls=response.tool_calls)
@@ -230,8 +224,6 @@ class AgentLoop:
                     else:
                         await self._tools.execute_batch(response.tool_calls, job)
 
-                    if job.output is not None and job.turn is not None:
-                        job.output.turns.append(job.turn)
                     await ctx.emit("tools_end", job=job)
                     await ctx.emit("turn_end", job=job)
                     continue
@@ -239,9 +231,6 @@ class AgentLoop:
                 if response.text:
                     if job.output:
                         job.output.content = response.text
-
-                if job.output is not None and job.turn is not None:
-                    job.output.turns.append(job.turn)
 
                 # follow-up
                 q = self._message_queues[job.id]

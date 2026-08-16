@@ -139,7 +139,6 @@ class QueuePlugin(Plugin):
             "session_id": job.session_id,
             "content": job.output.content,
             "events": [asdict(e) if isinstance(e, MessageEvent) else e for e in events],
-            "turns": [asdict(t) for t in job.output.turns],
         }
         try:
             await self._redis.rpush(self._output_queue, json.dumps(payload, ensure_ascii=False))

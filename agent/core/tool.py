@@ -9,7 +9,7 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any, TYPE_CHECKING
 
-from agent.core.model import ToolCall, ToolResult
+from agent.core.model import ToolCall
 
 if TYPE_CHECKING:
     from agent.core.loop import AgentContext, Job
@@ -202,7 +202,7 @@ class ToolRegistry:
         await asyncio.gather(*[self._execute_one(tc, job) for tc in tool_calls])
 
     async def _execute_one(self, tool_call: ToolCall, job: Job) -> None:
-        # 单工具执行：通知开始 → 校验 → 执行 → 追加结果 → emit tool_end
+        # 单工具执行：通知开始 → 校验 → 执行 → emit tool_end
         ctx = self._ctx
         await ctx.emit("tool_start", job=job, tool_call=tool_call)
 
@@ -227,27 +227,10 @@ class ToolRegistry:
             result = str(e)
             error = result
 
-        if job.turn is not None:
-            job.turn.tool_results.append(ToolResult(
-                tool_call_id=tool_call.id,
-                name=tool_call.name,
-                content=result,
-                error=error,
-            ))
-
         await ctx.emit("tool_end", job=job, tool_call=tool_call, result=result, error=error)
 
     async def fail_tool_call(self, tool_call: ToolCall, job: Job, reason: str) -> None:
-        # 工具未执行（异常）：记录结果并 emit tool_error，不触发 tool_start/tool_end
-        result = f"Error: {reason}"
-        if job.turn is not None:
-            job.turn.tool_results.append(ToolResult(
-                tool_call_id=tool_call.id,
-                name=tool_call.name,
-                content=result,
-                error=result,
-            ))
-
+        # 工具未执行（异常）：emit tool_error，不触发 tool_start/tool_end
         await self._ctx.emit("tool_error", job=job, tool_call=tool_call, error=reason)
 
     @staticmethod

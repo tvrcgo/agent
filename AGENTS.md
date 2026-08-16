@@ -40,7 +40,7 @@ job 运行中收到的 chat 消息排队，下轮迭代开始前由 loop 写入 
 
 #### 工具执行阻断
 
-core 只提供执行机制，阻断实现交给 plugin。`ToolRegistry.execute_batch`（core）：纯执行——并行执行传入的工具调用，各自 emit `tool_start`/`tool_end`；不做任何状态检查。`tool_guard`（plugin）：在 `tools_start` 审查 → 确认 → deny 则**结果写 `job.turn.tool_results`**、**从 `tool_calls` 剔除该调用**、并 emit `tool_error`——被阻断的调用不会进入 `execute_batch`，失败原因供 session 持久化（LLM 下一轮可感知）。取消：`cmd_cancel` 取消**单个 job**，经 `Task.cancel()` 注入 `CancelledError` 打断当前执行，`_run_loop` 捕获后置 `job.status = "cancelled"` 并 emit `job_end` 有序收尾。
+core 只提供执行机制，阻断实现交给 plugin。`ToolRegistry.execute_batch`（core）：纯执行——并行执行传入的工具调用，各自 emit `tool_start`/`tool_end`；不做任何状态检查。`tool_guard`（plugin）：在 `tools_start` 审查 → 确认 → deny 则**从 `tool_calls` 剔除该调用**、并 emit `tool_error`——被阻断的调用不会进入 `execute_batch`，失败原因供 session 持久化（LLM 下一轮可感知）。取消：`cmd_cancel` 取消**单个 job**，经 `Task.cancel()` 注入 `CancelledError` 打断当前执行，`_run_loop` 捕获后置 `job.status = "cancelled"` 并 emit `job_end` 有序收尾。
 
 #### Confirm Plugin
 
@@ -66,7 +66,7 @@ plugins:
       review_prompt: ...            # flash 判断提示词（可选）
 ```
 
-审查链路：工具在 `review_tools` 中 → flash LLM 判断风险 → safe 放行 / dangerous → `await ctx.emit("req:request_confirm", ...)` → ConfirmPlugin 推送确认 → deny 则**结果写 `job.turn.tool_results`、从 `tool_calls` 剔除调用、emit `tool_error`**（plugin 实现）——被阻断的调用不会进入 `execute_batch`。
+审查链路：工具在 `review_tools` 中 → flash LLM 判断风险 → safe 放行 / dangerous → `await ctx.emit("req:request_confirm", ...)` → ConfirmPlugin 推送确认 → deny 则**从 `tool_calls` 剔除调用、emit `tool_error`**（plugin 实现）——被阻断的调用不会进入 `execute_batch`。
 
 ### MCP Plugin
 MCP 作为插件，通过 HTTP 从 agent-mcp 服务同步工具。agent-mcp 运行在独立容器（`services/mcp/`），管理 Node.js MCP servers。插件每 10 分钟同步一次，移除失效 tools、注册新增 tools。工具命名格式为 `mcp_{server}_{tool}`。

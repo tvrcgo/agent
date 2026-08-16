@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 
 from agent.core.plugin import Plugin
 from agent.core.events import Event
-from agent.core.model import ToolResult, UserMessage
+from agent.core.model import UserMessage
 
 if TYPE_CHECKING:
     from agent.core.loop import AgentContext
@@ -75,16 +75,9 @@ class ToolGuardPlugin(Plugin):
                 blocked.append(tc)
 
         # 循环外统一剔除（避免迭代中修改列表）
-        # 未执行不触发 tool_start/tool_end；结果写 tool_results + emit tool_error 供 session 持久化
+        # 未执行不触发 tool_start/tool_end；emit tool_error 供 session 持久化失败结果
         for tc in blocked:
             reason = f"Tool '{tc.name}' execution denied by user."
-            if job.turn is not None:
-                job.turn.tool_results.append(ToolResult(
-                    tool_call_id=tc.id,
-                    name=tc.name,
-                    error=reason,
-                    content=f"Error: {reason}",
-                ))
             await ctx.emit("tool_error", job=job, tool_call=tc, error=reason)
             try:
                 tool_calls.remove(tc)
