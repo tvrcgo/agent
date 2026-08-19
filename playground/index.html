@@ -1029,10 +1029,31 @@ function ensureConnection(sessionId) {
           appendMessage(sessionId, 'message', d.content || '', {});
         }
         break;
-      case 'error':
-        await appendMessage(sessionId, 'error', `[${d.code}] ${d.message}`, {});
-        if (isCurrent) renderMessage('error', `[${d.code}] ${d.message}`, {});
+      case 'error': {
+        // error 事件两类：协议错误（code/message）与 job 错误（reason）
+        const isJobError = (d.data && d.data.reason);
+        const msg = isJobError ? `${d.content || d.data.reason}` : `[${d.code}] ${d.message}`;
+        await appendMessage(sessionId, 'error', msg, {});
+        if (isCurrent) renderMessage('error', msg, {});
+
+        // 达到最大迭代次数：提醒用户是否继续（agent 层面不介入，前端触发新一轮）
+        if (d.data && d.data.reason === 'Reached maximum iterations') {
+          if (!_maxIterPrompting.has(sessionId)) {
+            _maxIterPrompting.set(sessionId, true);
+            const ok = window.confirm('已达到最大迭代次数，是否继续运行？');
+            if (ok) {
+              const conn = _connections.get(sessionId);
+              if (conn && conn.readyState === WebSocket.OPEN) {
+                conn.send(JSON.stringify({ type: 'chat', payload: { content: '请继续' } }));
+                await appendMessage(sessionId, 'you', '继续运行', {});
+                if (isCurrent) renderMessage('you', '继续运行', {});
+              }
+            }
+            _maxIterPrompting.delete(sessionId);
+          }
+        }
         break;
+      }
       case 'thinking':
         if (d.stream) {
           // 流式 thinking 分块：累积更新同一块（done 时持久化），当前会话实时渲染
@@ -1061,23 +1082,6 @@ function ensureConnection(sessionId) {
         const state = _sessionStates.get(sessionId) || { status: '' };
         state.status = d.content;
         _sessionStates.set(sessionId, state);
-
-        // 达到最大迭代次数：提醒用户是否继续（agent 层面不介入，前端触发新一轮）
-        if (d.content === 'error' && d.data && d.data.reason === 'Reached maximum iterations') {
-          if (!_maxIterPrompting.has(sessionId)) {
-            _maxIterPrompting.set(sessionId, true);
-            const ok = window.confirm('已达到最大迭代次数，是否继续运行？');
-            if (ok) {
-              const conn = _connections.get(sessionId);
-              if (conn && conn.readyState === WebSocket.OPEN) {
-                conn.send(JSON.stringify({ type: 'chat', payload: { content: '请继续' } }));
-                await appendMessage(sessionId, 'you', '继续运行', {});
-                if (isCurrent) renderMessage('you', '继续运行', {});
-              }
-            }
-            _maxIterPrompting.delete(sessionId);
-          }
-        }
 
         if (isCurrent) {
           if (d.content === 'done') {

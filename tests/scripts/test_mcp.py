@@ -38,7 +38,7 @@ async def test_mcp_tools_loaded():
                     d = msg.get("payload", {}).get("data", {})
                     print(f"  Tool call: {d.get('tool')}")
 
-                if t == "status" and msg.get("payload", {}).get("content") in ("done", "error", "cancelled"):
+                if t == "error" or (t == "status" and msg.get("payload", {}).get("content") in ("done", "error", "cancelled")):
                     break
             except asyncio.TimeoutError:
                 print("  TIMEOUT")
@@ -85,7 +85,7 @@ async def test_mcp_filesystem_tool():
                     tool_results.append(d)
                     print(f"  Tool result: {d.get('tool')} - error={d.get('error') or 'none'}")
 
-                if t == "status" and msg.get("payload", {}).get("content") in ("done", "error", "cancelled"):
+                if t == "error" or (t == "status" and msg.get("payload", {}).get("content") in ("done", "error", "cancelled")):
                     break
             except asyncio.TimeoutError:
                 print("  TIMEOUT")

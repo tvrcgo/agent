@@ -29,7 +29,7 @@ async def _collect(ws, timeout=60):
         msg = json.loads(raw)
         msgs.append(msg)
         p = msg.get("payload", {})
-        if msg["type"] == "status" and p.get("content") in ("done", "idle", "error", "cancelled"):
+        if msg["type"] == "error" or (msg["type"] == "status" and p.get("content") in ("done", "idle", "error", "cancelled")):
             break
     return msgs
 
@@ -93,10 +93,10 @@ async def test_multi_session():
     results = await asyncio.gather(run(sa), run(sb))
     for i, msgs in enumerate(results):
         messages = [m for m in msgs if m["type"] == "message"]
-        errors = [m for m in msgs if m["type"] == "status" and m.get("payload", {}).get("content") == "error"]
+        errors = [m for m in msgs if m["type"] == "error" or (m["type"] == "status" and m.get("payload", {}).get("content") == "error")]
         print(f"  Session {i+1}: {len(messages)} message(s), {len(errors)} error(s)")
 
-    passed = all(len([m for m in msgs if m["type"] == "status" and m.get("payload", {}).get("content") == "error"]) == 0 for msgs in results)
+    passed = all(len([m for m in msgs if m["type"] == "error" or (m["type"] == "status" and m.get("payload", {}).get("content") == "error")]) == 0 for msgs in results)
     print("  PASS" if passed else "  FAIL")
     return passed
 
@@ -109,9 +109,9 @@ async def test_error_handling():
         try:
             raw = await asyncio.wait_for(ws.recv(), timeout=10)
             msg = json.loads(raw)
-            # Error is sent as status type with content='error' and data.code
-            passed = msg["type"] == "status" and msg.get("payload", {}).get("content") == "error"
-            print(f"  got: {msg['type']} {msg.get('data', {}).get('content')}")
+            # 协议错误由 websocket plugin 发 type=error（code/message）
+            passed = msg["type"] == "error"
+            print(f"  got: {msg['type']} {msg.get('payload', {}).get('code')}")
         except asyncio.TimeoutError:
             print("  no response")
             passed = False
@@ -281,7 +281,7 @@ async def test_long_running_subjob():
 
         tree_events = [m for m in msgs if m["type"] == "data" and m.get("payload", {}).get("data", {}).get("name") == "jobs"]
         messages = [m for m in msgs if m["type"] == "message"]
-        errors = [m for m in msgs if m["type"] == "status" and m.get("payload", {}).get("content") == "error"]
+        errors = [m for m in msgs if m["type"] == "error" or (m["type"] == "status" and m.get("payload", {}).get("content") == "error")]
 
         print(f"  job_tree events: {len(tree_events)}")
         print(f"  messages: {len(messages)}")

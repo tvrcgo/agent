@@ -4,16 +4,18 @@
 ## [unreleased] - 2026-08-19
 
 ### 核心摘要
-playground 前端在 job 达到 `max_iterations` 时询问用户是否继续。agent 层零改动：后端在达上限时本就发出 `status:error`（`data.reason="Reached maximum iterations"`），前端识别该事件后弹确认框；用户选择继续则向同一 session 重发 chat 触发新 job，依赖会话持久化冷加载延续上下文；选择停止则保持收尾。可重复询问（每次达上限都询问）。
+job 错误（达 `max_iterations`、异常）输出从 `status(content=error)` 改为独立 `error` 类型事件：MessagePlugin 的 `_on_job_end`（`job.status=="error"`）与 `_on_job_error` 统一发出 `OutputMessage(type="error", content=<reason>, data={"reason": <reason>})`，与 websocket 协议错误（code/message）共用 `error` 类型。playground 前端在收到达上限错误事件后弹「已达到最大迭代次数，是否继续运行？」确认框；用户选择继续则向同一 session 重发 chat 触发新 job（会话冷加载延续上下文），选择停止则保持收尾。可重复询问。
 
 ### 变更
-- 新增：`playground/index.html` `case 'status'` 分支识别 `error + data.reason="Reached maximum iterations"`，弹「已达到最大迭代次数，是否继续运行？」确认框；确认后向同一 session 重发 `chat`（"请继续"）触发新 job，并追加「继续运行」user 消息到会话历史
+- 变更：`agent/plugins/message.py` `_on_job_end` 的 `job.status=="error"` 分支与 `_on_job_error` 输出从 `status` 改为 `error` 类型；`content` 与 `data.reason` 承载错误原因（max_iterations→"Reached maximum iterations"，异常→异常文本）
+- 变更：`playground/index.html` `case 'error'` 扩展为同时处理协议错误（code/message）与 job 错误（reason）；达上限错误事件（`data.reason="Reached maximum iterations"`）弹确认框，确认后向同一 session 重发 `chat`（"请继续"）触发新 job，并追加「继续运行」user 消息到会话历史
 - 变更：`_maxIterPrompting` 标记防止同一 session 弹窗期间重复弹（每次达上限可重新询问）
+- 测试：`test_ws.py`/`test_protocol.py`/`test_mcp.py` 终态判断与 error 断言兼容 `type="error"`（原来错误从 status 改到 error 类型）
 
 ### 上下文
-- 长任务常在一个会话内跑不完 `max_iterations`（默认 100）轮，此前直接以 `max_iterations` 错误收尾，用户无法继续
-- 复用现有事件链：loop 达上限 → `job_end(reason=max_iterations)` → MessagePlugin 翻译 `status:error`；会话按 session_id 持久化，新 job 冷加载历史延续上下文
-- 影响范围：仅 `playground/index.html`；agent 层（`agent/`）零改动
+- 长任务常在一个会话内跑不完 `max_iterations`（默认 100）轮，此前直接以错误收尾，用户无法继续
+- 达上限 → `job_end(reason=max_iterations)` → MessagePlugin 翻译 `error` 类型；会话按 session_id 持久化，新 job 冷加载历史延续上下文
+- 影响范围：`agent/plugins/message.py`（错误输出类型）、`playground/index.html`（error 分支）、集成测试脚本
 
 ## [unreleased] - 2026-08-18
 

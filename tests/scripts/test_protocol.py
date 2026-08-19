@@ -38,7 +38,7 @@ async def test_tool_call_protocol():
                 p = msg.get("payload", {})
                 print(f"  {t}")
                 
-                if t == "status" and p.get("content") in ("done", "error", "cancelled"):
+                if t == "error" or (t == "status" and p.get("content") in ("done", "error", "cancelled")):
                     break
             except asyncio.TimeoutError:
                 print("  TIMEOUT")
@@ -109,7 +109,7 @@ async def test_message_format():
                 msg = json.loads(raw)
                 events.append(msg)
                 
-                if msg.get("type") == "status" and msg.get("payload", {}).get("content") in ("done", "error"):
+                if msg.get("type") == "error" or (msg.get("type") == "status" and msg.get("payload", {}).get("content") in ("done", "error")):
                     break
             except asyncio.TimeoutError:
                 break
@@ -165,7 +165,7 @@ async def test_status_event():
                     })
                     print(f"  status: {p.get('content')}")
                 
-                if msg.get("type") == "status" and msg.get("payload", {}).get("content") in ("done", "error"):
+                if msg.get("type") == "error" or (msg.get("type") == "status" and msg.get("payload", {}).get("content") in ("done", "error")):
                     break
             except asyncio.TimeoutError:
                 break

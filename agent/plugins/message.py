@@ -155,8 +155,11 @@ class MessagePlugin(Plugin):
             return
         if job.status == "error":
             reason = evt.data.get("reason", "")
-            reasons = {"reason": "Reached maximum iterations"} if reason == "max_iterations" else {"reason": "Unknown error"}
-            status_event = OutputMessage(type="status", content="error", data=reasons, session_id=job.id)
+            if reason == "max_iterations":
+                reason_text = "Reached maximum iterations"
+            else:
+                reason_text = reason or "Unknown error"
+            status_event = OutputMessage(type="error", content=reason_text, data={"reason": reason_text}, session_id=job.id)
         elif job.status == "cancelled":
             status_event = OutputMessage(type="status", content="cancelled", session_id=job.id)
         else:
@@ -172,5 +175,5 @@ class MessagePlugin(Plugin):
         reason = str(error) if error is not None else "Unknown error"
         await ctx.emit(
             "msg_output",
-            output=OutputMessage(type="status", content="error", data={"reason": reason}, session_id=job.id),
+            output=OutputMessage(type="error", content=reason, data={"reason": reason}, session_id=job.id),
         )
