@@ -306,6 +306,9 @@
     text-transform: uppercase;
     margin-right: 8px;
   }
+  .tool-result-nested.failed .label { color: var(--error); }
+  .tool-result-nested.failed span:last-child { color: var(--error); }
+  .event.tool_call.has-failed { border-color: var(--error); }
 
   /* ---- footer ---- */
   .main-footer {
@@ -788,8 +791,10 @@ function renderMessage(type, content, metadata) {
     const parent = _toolCallEls[meta.id];
     const detail = parent.querySelector('.detail');
     const resultEl = document.createElement('div');
-    resultEl.className = 'tool-result-nested';
+    // 工具未执行（守卫拒绝 / 截断 fail）：失败结果用 error 视觉
+    resultEl.className = 'tool-result-nested' + (meta.failed ? ' failed' : '');
     resultEl.innerHTML = `<span class="label">→ result</span><span>${escapeHtml(content)}</span>`;
+    if (meta.failed) parent.classList.add('has-failed');
     detail.appendChild(resultEl);
     return;
   }
@@ -995,8 +1000,9 @@ function ensureConnection(sessionId) {
         const toolName = (d.data && d.data.tool) || '';
         const toolId = (d.data && d.data.id) || '';
         const error = (d.data && d.data.error) || '';
+        const failed = !!(d.data && d.data.failed);
         const resultContent = formatResult(d.content || '', error);
-        const meta = { id: toolId, name: toolName };
+        const meta = { id: toolId, name: toolName, failed };
         await appendMessage(sessionId, 'tool_result', resultContent, meta);
         if (isCurrent) renderMessage('tool_result', resultContent, meta);
         break;
@@ -1086,6 +1092,9 @@ function ensureConnection(sessionId) {
         if (isCurrent) {
           if (d.content === 'done') {
             $statusBar.textContent = '';
+            $input.focus();
+          } else if (d.content === 'error' || d.content === 'cancelled') {
+            $statusBar.textContent = d.content;
             $input.focus();
           } else {
             $statusBar.textContent = d.content;

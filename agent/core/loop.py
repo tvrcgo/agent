@@ -193,16 +193,21 @@ class AgentLoop:
                     )
                 await ctx.emit("llm_end", job=job, response=response)
 
+                if response.finish_reason == "length":
+                    for tool_call in (response.tool_calls or []):
+                        await self._tools.fail_tool_call(
+                            tool_call, job, "Response truncated, tool call not executed",
+                        )
+                    job.status = "error"
+                    await ctx.emit("turn_end", job=job)
+                    await ctx.emit("job_error", job=job, error="Response truncated (length)")
+                    await ctx.emit("job_end", job=job, reason="truncated")
+                    return
+
                 if response.tool_calls:
                     job.status = "acting"
                     await ctx.emit("tools_start", job=job, tool_calls=response.tool_calls)
-
-                    if response.finish_reason == "length":
-                        logger.warning("Response truncated (length), auto-failing tool calls")
-                        for tool_call in response.tool_calls:
-                            await self._tools.fail_tool_call(tool_call, job, "Response truncated, tool call not executed")
-                    else:
-                        await self._tools.execute_batch(response.tool_calls, job)
+                    await self._tools.execute_batch(response.tool_calls, job)
 
                     await ctx.emit("tools_end", job=job)
                     await ctx.emit("turn_end", job=job)
@@ -225,6 +230,7 @@ class AgentLoop:
 
             job.status = "error"
             await ctx.emit("turn_end", job=job)
+            await ctx.emit("job_error", job=job, error="Reached maximum iterations")
             await ctx.emit("job_end", job=job, reason="max_iterations")
 
         except asyncio.CancelledError:
@@ -234,6 +240,7 @@ class AgentLoop:
         except Exception as e:
             job.status = "error"
             await ctx.emit("job_error", job=job, error=e)
+            await ctx.emit("job_end", job=job, reason="error")
 
         finally:
             await ctx.emit("job_complete", job=job)

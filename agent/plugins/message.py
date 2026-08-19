@@ -38,6 +38,7 @@ class MessagePlugin(Plugin):
         ctx.on("tools_start", self._on_tools_start)
         ctx.on("tool_start", self._on_tool_start)
         ctx.on("tool_end", self._on_tool_end)
+        ctx.on("tool_error", self._on_tool_error)
         ctx.on("job_end", self._on_job_end)
         ctx.on("job_error", self._on_job_error)
         logger.info("MessagePlugin initialized, stream=%s", self._stream)
@@ -149,19 +150,36 @@ class MessagePlugin(Plugin):
             },
         ))
 
+    async def _on_tool_error(self, ctx: AgentContext, evt: Event) -> None:
+        job = evt.job
+        if job is None:
+            return
+        tool_call = evt.data.get("tool_call")
+        if tool_call is None:
+            return
+        reason = evt.data.get("error", "")
+        # 工具未执行（守卫拒绝 / 截断 fail）
+        await ctx.emit("msg_output", output=OutputMessage(
+            type="tool_result",
+            content=f"Error: {reason}",
+            session_id=job.id,
+            data={
+                "id": tool_call.id,
+                "tool": tool_call.name,
+                "error": reason,
+                "failed": True,
+            },
+        ))
+
     async def _on_job_end(self, ctx: AgentContext, evt: Event) -> None:
         job = evt.job
         if job is None:
             return
-        if job.status == "error":
-            reason = evt.data.get("reason", "")
-            if reason == "max_iterations":
-                reason_text = "Reached maximum iterations"
-            else:
-                reason_text = reason or "Unknown error"
-            status_event = OutputMessage(type="error", content=reason_text, data={"reason": reason_text}, session_id=job.id)
-        elif job.status == "cancelled":
+        # 终态只发 status；错误文案由 job_error 承担
+        if job.status == "cancelled":
             status_event = OutputMessage(type="status", content="cancelled", session_id=job.id)
+        elif job.status == "error":
+            status_event = OutputMessage(type="status", content="error", session_id=job.id)
         else:
             status_event = OutputMessage(type="status", content="done", session_id=job.id)
 
