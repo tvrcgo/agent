@@ -34,10 +34,9 @@ async def test_mcp_tools_loaded():
                 events.append(msg)
                 t = msg.get("type")
 
-                if t == "data":
+                if t == "tool_call":
                     d = msg.get("payload", {}).get("data", {})
-                    if d.get("name") == "tool_call":
-                        print(f"  Tool call: {d.get('tool')}")
+                    print(f"  Tool call: {d.get('tool')}")
 
                 if t == "status" and msg.get("payload", {}).get("content") in ("done", "error", "cancelled"):
                     break
@@ -77,14 +76,14 @@ async def test_mcp_filesystem_tool():
                 events.append(msg)
                 t = msg.get("type")
 
-                if t == "data":
+                if t == "tool_call":
                     d = msg.get("payload", {}).get("data", {})
-                    if d.get("name") == "tool_call":
-                        tool_calls.append(d)
-                        print(f"  Tool call: {d.get('tool')}")
-                    elif d.get("name") == "tool_result":
-                        tool_results.append(d)
-                        print(f"  Tool result: {d.get('tool')} - error={d.get('error') or 'none'}")
+                    tool_calls.append(d)
+                    print(f"  Tool call: {d.get('tool')}")
+                elif t == "tool_result":
+                    d = msg.get("payload", {}).get("data", {})
+                    tool_results.append(d)
+                    print(f"  Tool result: {d.get('tool')} - error={d.get('error') or 'none'}")
 
                 if t == "status" and msg.get("payload", {}).get("content") in ("done", "error", "cancelled"):
                     break

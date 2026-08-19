@@ -105,7 +105,6 @@ def _validate_type(name: str, value: Any, schema: dict[str, Any]) -> Any:
 
 
 def validate_arguments(arguments: dict[str, Any], schema: dict[str, Any]) -> dict[str, Any]:
-    # 校验参数：检查必填、校验类型、应用默认值，失败抛 ValueError
     if not schema:
         return arguments
 
@@ -195,15 +194,15 @@ class ToolRegistry:
         tool_calls: list[ToolCall],
         job: Job,
     ) -> None:
-        # 纯执行机制：并行执行传入的调用（阻断剔除由 plugin 在 tools_start 完成）
+        # 纯执行机制：阻断剔除由 plugin 在 tools_start 完成
         if not tool_calls:
             return
         logger.debug("Executing %d tool calls in parallel", len(tool_calls))
         await asyncio.gather(*[self._execute_one(tc, job) for tc in tool_calls])
 
     async def _execute_one(self, tool_call: ToolCall, job: Job) -> None:
-        # 单工具执行：通知开始 → 校验 → 执行 → emit tool_end
         ctx = self._ctx
+        # 纯执行：只 emit 领域事件（tool_start/tool_end），输出由 message plugin 构造
         await ctx.emit("tool_start", job=job, tool_call=tool_call)
 
         result = ""
@@ -230,7 +229,6 @@ class ToolRegistry:
         await ctx.emit("tool_end", job=job, tool_call=tool_call, result=result, error=error)
 
     async def fail_tool_call(self, tool_call: ToolCall, job: Job, reason: str) -> None:
-        # 工具未执行（异常）：emit tool_error，不触发 tool_start/tool_end
         await self._ctx.emit("tool_error", job=job, tool_call=tool_call, error=reason)
 
     @staticmethod

@@ -7,9 +7,11 @@
 - **入口** (`__main__.py`)：加载配置、创建 `AgentLoop` 并启动/停止；所有组件（models/总线/tools/plugins）由 `AgentLoop.start()` 统一加载
 - **推理循环** (`loop.py`)：Think→Act→Observe 循环，每个 WebSocket 会话一个 asyncio Task。loop.py 只做核心调度，功能扩展通过事件钩子实现，禁止在其中添加业务逻辑
 - **事件总线** (`events.py`)：agent 级基础消息机制。`Event{name, job, data}` 数据类（`data` 读写对称：`evt.field` 读 / `evt.field = value` 写都代理到 data）+ `EventBus`（订阅 `on`、退订 `off`、发布 `emit`），插件和任何组件通过 `ctx.on`/`ctx.emit` 交流
+- **I/O 消息模型** (`io.py`)：`InputMessage` / `OutputMessage` 数据类与 `OutputType` 字面量。独立成模块，供 loop、core/tool 及各插件引用，避免 core 内部（tool.py ← loop.py）循环依赖
 - **插件** (`plugin.py`)：插件容器，插件在 `load` 时通过 `ctx.on` 注册事件 handler，`PluginRegistry` 只负责插件实例的加载与卸载
 - **工具** (`tool.py`)：可执行工具的抽象基类和注册表，从 `agent/tools/` 加载 Tool 子类。`config.yml` 中 tools 列表支持字符串或带参数的 dict 格式，参数通过 `Tool.config` 传递给工具实例
 - **技能插件** (`plugins/skill.py`)：SKILL.md 指令模板，从技能目录加载（默认 `agent/skills/`、`skills/`，config 可覆盖），`turn_start` 把技能提示词追加到 `job.turn.prompts`，由 SessionPlugin 在 `llm_start` 统一合并拼入系统提示词（当前时间等提示段同机制：`turn_start` 追加、`llm_start` 组装，合并为单条 system message 保证模型兼容）
+- **消息插件** (`plugins/message.py`)：把核心事件翻译成 `msg_output`。loop 只 emit 领域事件（llm_start/llm_chunk/llm_end/tools_start/job_end/job_error），MessagePlugin 监听后构造 thinking/message/status 输出，loop 不感知输出细节
 
 ## 核心概念
 
@@ -24,23 +26,32 @@
 - 事件名与 `req.data`/`req.result` 字段由调用双方约定
 
 ### 事件总线
-事件总线是 agent 的通信中枢，`EventBus` 持有全部 handler，对外统一 `on/off/emit`，`AgentLoop` 通过 `ctx` 暴露同名 API，`ctx.emit` 纯转发 `EventBus.emit`。`EventBus.emit` 按事件名是否带 `req:` 前缀分流两路：`EventBus.request`（请求-响应，自动创建 `Request` 放 `Event.request`、只允许单个响应方、隐式返回回填结果、阻塞等待）；`EventBus.broadcast`（广播，同步并发：`asyncio.gather` 并行执行所有 handler 并等待全部完成，单个 handler 异常被隔离记日志，不中断其他 handler 与 emit 本身）。事件 `Event{name, job, data, request}` 扁平结构：`job` 定位到具体 job（多 job 并发下 ctx 不持有 job），`data` 携带业务字段，`request` 是请求-响应原语的请求对象。运行时数据（LLM 响应、工具结果、reason/error）一律随事件传递，`job.data` 只存静态数据（`work_dir`）与执行缓存（`messages`）。
+事件总线是 agent 的通信中枢，`EventBus` 持有全部 handler，对外统一 `on/off/emit`，`AgentLoop` 通过 `ctx` 暴露同名 API，`ctx.emit` 纯转发 `EventBus.emit`。`EventBus.emit` 按事件名是否带 `req:` 前缀分流两路：`EventBus.request`（请求-响应，自动创建 `Request` 放 `Event.request`、只允许单个响应方、隐式返回回填结果、阻塞等待）；`EventBus.broadcast`（广播，同步并发：`asyncio.gather` 并行执行所有 handler 并等待全部完成，单个 handler 异常被隔离记日志，不中断其他 handler 与 emit 本身）。事件 `Event{name, job, data, request}` 扁平结构：`job` 定位到具体 job（多 job 并发下 ctx 不持有 job），`data` 携带业务字段（`input`/`output`/`response` 等），`request` 是请求-响应原语的请求对象。运行时数据（LLM 响应、工具结果、reason/error）一律随事件传递，`job.data` 只存静态数据（`work_dir`）与执行缓存（`messages`）。
 
 ### 消息排队
 job 运行中收到的 chat 消息排队，下轮迭代开始前由 loop 写入 `job.data`，SessionPlugin 在 `llm_start` 消费为 user 消息。
+
+### I/O 消息规范
+`msg_input` / `msg_output` 是 loop 与外部交流的 I/O 通道：
+- **输入**：`emit("msg_input", input=InputMessage)`，消息体只含对外信息（`content`/`type`/`action`/`data`/`session_id`）。`Job` 由 loop 内部构造：`job.id` 取 `session_id`（**Job 不持有 session_id**，`job.id` 即 session 身份，loop 不感知 session 概念），运行中同 id 的 chat 消息自动归并为 follow-up（进该 job 队列、下轮消费）。
+- **输出**：`emit("msg_output", output=OutputMessage)`，`OutputMessage`（`type`/`content`/`data`/`session_id`）自包含归属，经事件 `data` 传递（与 `input` 对称，无特殊字段），消费者读 `evt.data["output"]`，不依赖事件上的 job。
+- **输出归属**：`msg_output` 统一由 MessagePlugin 发出（非流式 `thinking`/`message`/`status`，流式 `thinking`/`message` 与 `tool_call`/`tool_result` 都从领域事件翻译而来）。loop 与 core/tool 只 emit 领域事件，不感知输出细节——
+  - **MessagePlugin**（`plugins/message.py`）监听事件翻译成输出：`llm_start` → `status:thinking`；`llm_chunk` → 流式 `thinking`/`message`（`stream=True`，`loop.on_chunk` 只转发 chunk 事件）；`llm_end` → 非流式 `thinking`/`message`；`tools_start` → `status:acting`；`tool_start`/`tool_end` → `tool_call`/`tool_result`；`job_end`/`job_error` → 终态 `status`（done/error/cancelled）。
+  - SessionPlugin 不发 `msg_output`，只做会话数据（存取、压缩、LLM 消息组装）。
+- **边界**：消息体不承载内部调度概念（无 `job_id`）。subjob 递归触发用独立 `session_id`（基于父 session 构造），loop 据此自然建独立 job，无需特化。
 
 ### 上下文压缩
 存储无上限，冷启只加载尾部若干条。token 超阈值时通过独立 LLM 调用压缩旧消息，保留最近原文。压缩在内存完成，JSONL 保留完整历史。
 
 ### Job 树
-复杂任务可通过 `sub_job` 工具并行执行。子 Job 共享同一 AgentLoop 的 LLM、tools 和 skills，通过 `asyncio.gather` 并发执行。`max_sub_job_depth` 限制递归深度。
+复杂任务可通过 `sub_job` 工具并行执行。子 Job 基于父会话构造独立 `session_id`（不与父共用），经 `msg_input` 递归创建为普通 job（`job.id` 即子 session），流程与外部输入一致；父子关联、结果回传由 SubJobPlugin 自维护（监听 `job_end` 按 `job.id` 匹配，结果取 `job.turn.content`）。`max_sub_job_depth` 限制递归深度。
 
 ### 插件生命周期
-`agent_start` → `job_start` → `llm_start` → `llm_end` → `tools_start` / `tool_start` → 工具执行 → `tool_end` → `tools_end` → 循环 → `job_end` / `job_error` → `job_complete` / `agent_stop`。工具**未执行**的异常情形（被守卫拒绝 / 被截断 fail）走 `tool_error`（记录失败结果，不触发 tool_start/tool_end）。`msg_output` 由插件在需要推送事件时主动触发。`cmd_<action>` 钩子处理 UI 操作。
+`agent_start` → `job_start` → `llm_start` → `llm_end` → `tools_start` / `tool_start` → 工具执行 → `tool_end` → `tools_end` → 循环 → `job_end` / `job_error` → `job_complete` / `agent_stop`。工具**未执行**的异常情形（被守卫拒绝 / 被截断 fail）走 `tool_error`（记录失败结果，不触发 tool_start/tool_end）。`msg_output` 由 MessagePlugin 统一发出（见 I/O 消息规范）。`cmd_<action>` 钩子处理 UI 操作。
 
 #### 工具执行阻断
 
-core 只提供执行机制，阻断实现交给 plugin。`ToolRegistry.execute_batch`（core）：纯执行——并行执行传入的工具调用，各自 emit `tool_start`/`tool_end`；不做任何状态检查。`tool_guard`（plugin）：在 `tools_start` 审查 → 确认 → deny 则**从 `tool_calls` 剔除该调用**、并 emit `tool_error`——被阻断的调用不会进入 `execute_batch`，失败原因供 session 持久化（LLM 下一轮可感知）。取消：`cmd_cancel` 取消**单个 job**，经 `Task.cancel()` 注入 `CancelledError` 打断当前执行，`_run_loop` 捕获后置 `job.status = "cancelled"` 并 emit `job_end` 有序收尾。
+core 只提供执行机制，阻断实现交给 plugin。`ToolRegistry.execute_batch`（core）：纯执行——并行执行传入的工具调用，各自 emit `tool_start`/`tool_end`（`tool_call`/`tool_result` 输出由 MessagePlugin 翻译）；不做任何状态检查。`tool_guard`（plugin）：在 `tools_start` 审查 → 确认 → deny 则**从 `tool_calls` 剔除该调用**、并 emit `tool_error`——被阻断的调用不会进入 `execute_batch`，失败原因供 session 持久化（LLM 下一轮可感知）。取消：`cmd_cancel` 取消**单个 job**，经 `Task.cancel()` 注入 `CancelledError` 打断当前执行，`_run_loop` 捕获后置 `job.status = "cancelled"` 并 emit `job_end` 有序收尾。
 
 #### Confirm Plugin
 

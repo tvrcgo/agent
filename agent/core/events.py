@@ -40,8 +40,6 @@ class Event:
 
 @dataclass
 class Request:
-    # 请求-响应原语中的请求对象，作为 Event.request 正式字段传递
-
     name: str
     id: str = field(default_factory=lambda: uuid.uuid4().hex[:8])
     data: dict[str, Any] = field(default_factory=dict)
@@ -80,14 +78,12 @@ class EventBus:
         return await self._broadcast(event, job, ctx=ctx, **data)
 
     async def _request(self, event: str, job: "Job | None", timeout: float, ctx: "AgentContext | None" = None, **data: Any) -> Any | None:
-        # 请求-响应：创建 Request 放入 Event.request 派发，阻塞等待结果
         req = Request(name=event, data=data)
         evt = Event(name=event, job=job, data={}, request=req)
         await self._dispatch(evt, ctx)
         return await req.wait(timeout)
 
     async def _broadcast(self, event: str, job: "Job | None", ctx: "AgentContext | None" = None, **data: Any) -> Event:
-        # 广播：同步并发派发全部 handler
         evt = Event(name=event, job=job, data=data)
         await self._dispatch(evt, ctx)
         return evt

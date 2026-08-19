@@ -10,7 +10,8 @@ from typing import Any
 import redis.asyncio as redis
 
 from agent.core.plugin import Plugin
-from agent.core.loop import AgentContext, InputMessage, Job, MessageEvent
+from agent.core.io import InputMessage, OutputMessage
+from agent.core.loop import AgentContext
 from agent.core.events import Event
 
 
@@ -113,32 +114,23 @@ class QueuePlugin(Plugin):
                 return
 
             input_msg = InputMessage(content=content, session_id=session_id)
-            job = Job(
-                id=session_id,
-                session_id=session_id,
-                status="pending",
-                input=input_msg,
-            )
-            await self._ctx.emit("msg_input", job=job)
+            await self._ctx.emit("msg_input", input=input_msg)
         except json.JSONDecodeError as e:
             logger.warning("Failed to parse input message: %s", e)
         except Exception as e:
             logger.warning("Failed to handle input message: %s", e)
 
     async def _on_output(self, ctx: AgentContext, evt: Event) -> None:
-        job = evt.job
-        if job is None or job.output is None or self._redis is None:
+        if self._redis is None:
             return
 
-        events = job.output.events
-        job.output.events = []
-        if not events:
+        output = evt.data.get("output")
+        if output is None:
             return
 
         payload = {
-            "session_id": job.session_id,
-            "content": job.output.content,
-            "events": [asdict(e) if isinstance(e, MessageEvent) else e for e in events],
+            "session_id": output.session_id,
+            "events": [asdict(output) if isinstance(output, OutputMessage) else output],
         }
         try:
             await self._redis.rpush(self._output_queue, json.dumps(payload, ensure_ascii=False))

@@ -53,18 +53,17 @@ async def test_tool_call_protocol():
             by_type[t] = by_type.get(t, 0) + 1
         print(f"By type: {by_type}")
         
-        # Check tool events
+        # Check tool events (top-level types)
         tool_calls = []
         tool_results = []
         
         for e in events:
-            if e.get("type") == "data":
-                d = e.get("payload", {}).get("data", {})
-                name = d.get("name")
-                if name == "tool_call":
-                    tool_calls.append(d)
-                elif name == "tool_result":
-                    tool_results.append(d)
+            if e.get("type") == "tool_call":
+                d = e.get("payload", {})
+                tool_calls.append({**d.get("data", {}), "content": d.get("content", "")})
+            elif e.get("type") == "tool_result":
+                d = e.get("payload", {})
+                tool_results.append({**d.get("data", {}), "content": d.get("content", "")})
         
         print(f"\nTool calls: {len(tool_calls)}")
         for tc in tool_calls:

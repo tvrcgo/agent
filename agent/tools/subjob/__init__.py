@@ -50,7 +50,7 @@ class SubJobTool(Tool):
 
         async def run_one(j: dict, i: int) -> tuple[int, str, str]:
             content = j.get("content", f"job-{i + 1}")
-            future = subjob(content, job, ctx)
+            future = await subjob(content, job, ctx)
             result = await future
             return (i, content, result)
 

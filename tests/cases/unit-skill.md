@@ -60,7 +60,7 @@ async def test_skill_prompt_injected():
     plugin = SkillPlugin()
     plugin.load(loop.ctx, {"dirs": ["agent/skills", "skills"]})
 
-    job = Job(id="j1", session_id="j1", status="pending")
+    job = Job(id="j1", status="pending")
     job.turn = Turn()
     await loop.ctx.emit("turn_start", job=job)
 

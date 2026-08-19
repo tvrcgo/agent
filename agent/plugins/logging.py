@@ -122,7 +122,10 @@ class LoggingPlugin(Plugin):
             return
         jid = job.id
         reason = evt.data.get("reason", "unknown")
-        logger.info("[%s] job finished: %s", jid, reason)
+        if reason == "max_iterations":
+            logger.warning("[%s] Reached maximum iterations", jid)
+        else:
+            logger.info("[%s] job finished: %s", jid, reason)
 
     async def _on_error(self, ctx: AgentContext, evt: Event) -> None:
         job = evt.job
@@ -130,7 +133,11 @@ class LoggingPlugin(Plugin):
             return
         jid = job.id
         error = evt.data.get("error")
-        logger.error("[%s] job error: %s", jid, error)
+        # error 是异常对象时附带 traceback
+        if isinstance(error, BaseException):
+            logger.error("[%s] job error: %s", jid, error, exc_info=(type(error), error, error.__traceback__))
+        else:
+            logger.error("[%s] job error: %s", jid, error)
 
     async def _on_complete(self, ctx: AgentContext, evt: Event) -> None:
         job = evt.job

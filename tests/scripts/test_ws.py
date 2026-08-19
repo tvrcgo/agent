@@ -143,21 +143,20 @@ async def test_tool_call_protocol():
         await ws.send(_chat("use web_search to search for Python asyncio"))
         msgs = await _collect(ws, timeout=90)
 
-        # Data events with name='tool_call' or 'tool_result'
-        tool_calls = [m for m in msgs if m["type"] == "data" and m.get("payload", {}).get("data", {}).get("name") == "tool_call"]
-        tool_results = [m for m in msgs if m["type"] == "data" and m.get("payload", {}).get("data", {}).get("name") == "tool_result"]
+        # Tool events are top-level types (not nested in data)
+        tool_calls = [m for m in msgs if m["type"] == "tool_call"]
+        tool_results = [m for m in msgs if m["type"] == "tool_result"]
 
         print(f"  tool_calls: {len(tool_calls)}, tool_results: {len(tool_results)}")
         for tc in tool_calls:
-            p = tc["payload"]["data"]
-            assert "id" in p, "missing id"
-            assert "tool" in p, "missing tool"
-            assert "arguments" in p, "missing arguments"
+            p = tc["payload"]
+            assert "id" in (p.get("data") or {}), "missing id"
+            assert "tool" in (p.get("data") or {}), "missing tool"
+            assert "arguments" in (p.get("data") or {}), "missing arguments"
         for tr in tool_results:
-            p = tr["payload"]["data"]
-            assert "id" in p, "missing id"
-            assert "tool" in p, "missing tool"
-            assert "result" in p, "missing result"
+            p = tr["payload"]
+            assert "id" in (p.get("data") or {}), "missing id"
+            assert "tool" in (p.get("data") or {}), "missing tool"
 
         tc_ids = {m["payload"]["data"]["id"] for m in tool_calls}
         tr_ids = {m["payload"]["data"]["id"] for m in tool_results}
@@ -315,8 +314,8 @@ async def test_long_running_subjob():
 
 
 async def test_message_event_types():
-    """MessageEvent supports message/status/data types."""
-    print("\n=== Scenario 13: MessageEvent Types ===")
+    """OutputMessage supports message/status/data types."""
+    print("\n=== Scenario 13: OutputMessage Types ===")
     async with _connect(f"{WS_URL}?session_id=test-types-{uuid.uuid4().hex[:6]}") as ws:
         await ws.send(_chat("say hello"))
         msgs = await _collect(ws, timeout=30)

@@ -9,6 +9,7 @@ from typing import Any
 
 from agent.core.config import Config
 from agent.core.events import Event, EventBus
+from agent.core.io import InputMessage
 from agent.core.model import ModelRegistry, ModelResponse, StreamChunk
 from agent.core.plugin import PluginRegistry
 from agent.core.tool import ToolRegistry
@@ -44,41 +45,17 @@ class MessageQueue:
 
 
 @dataclass
-class MessageEvent:
-    type: str
-    content: str = ""
-    data: dict = field(default_factory=dict)
-
-
-@dataclass
-class InputMessage:
-    content: str
-    type: str = "chat"
-    action: str = ""
-    data: dict = field(default_factory=dict)
-    session_id: str = ""
-
-
-@dataclass
 class Turn:
     steering_messages: list[str] = field(default_factory=list)
     prompts: list[str] = field(default_factory=list)
-
-
-@dataclass
-class OutputMessage:
-    session_id: str = ""
     content: str = ""
-    events: list[Any] = field(default_factory=list)
 
 
 @dataclass
 class Job:
     id: str
-    session_id: str
     status: str
     input: InputMessage | None = None
-    output: OutputMessage | None = None
     turn: Turn | None = None
     data: dict[str, Any] = field(default_factory=dict)
     _task: asyncio.Task[None] | None = field(default=None, repr=False)
@@ -144,13 +121,18 @@ class AgentLoop:
         return False
 
     async def _on_input(self, ctx: AgentContext, evt: Event) -> None:
-        job = evt.job
-        if job is None or job.input is None:
+        input_msg = evt.data.get("input")
+        if not isinstance(input_msg, InputMessage):
             return
+        job = Job(
+            id=input_msg.session_id,
+            status="pending",
+            input=input_msg,
+        )
 
-        if job.input.type == "chat":
+        if input_msg.type == "chat":
             await self._handle_chat(job)
-        elif job.input.type == "command":
+        elif input_msg.type == "command":
             await self._handle_command(job)
 
     async def _handle_chat(self, job: Job) -> None:
@@ -165,7 +147,6 @@ class AgentLoop:
             logger.info("Job %s queued (active: %d, max: %d)", job.id, active, self._config.agent.max_concurrent)
             return
 
-        job.output = OutputMessage(session_id=job.session_id)
         job.status = "pending"
         self._jobs[job.id] = job
         await self.ctx.emit("job_start", job=job)
@@ -189,17 +170,16 @@ class AgentLoop:
 
                 job.turn = Turn(steering_messages=steering)
                 await ctx.emit("turn_start", job=job)
-                await ctx.emit("llm_start", job=job)
                 job.status = "thinking"
+                await ctx.emit("llm_start", job=job)
 
                 messages = job.data.get("messages", [])
                 tools = self._tools.get_defs()
 
                 if self._config.agent.stream:
                     async def on_chunk(chunk: StreamChunk) -> None:
-                        if chunk.text and job.output is not None:
-                            job.output.events.append(MessageEvent(type="stream", content=chunk.text))
-                            await ctx.emit("msg_output", job=job)
+                        # 流式分块转为事件，由 message plugin 构造输出
+                        await ctx.emit("llm_chunk", job=job, chunk=chunk)
 
                     response: ModelResponse = await self._models.get("main").chat_stream(
                         messages=messages,
@@ -229,8 +209,8 @@ class AgentLoop:
                     continue
 
                 if response.text:
-                    if job.output:
-                        job.output.content = response.text
+                    if job.turn:
+                        job.turn.content = response.text
 
                 # follow-up
                 q = self._message_queues[job.id]
@@ -243,8 +223,6 @@ class AgentLoop:
                 await ctx.emit("job_end", job=job, reason="done")
                 return
 
-            msg = f"Reached maximum iterations ({self._config.agent.max_iterations})"
-            logger.warning(msg)
             job.status = "error"
             await ctx.emit("turn_end", job=job)
             await ctx.emit("job_end", job=job, reason="max_iterations")
@@ -254,7 +232,6 @@ class AgentLoop:
             job.status = "cancelled"
             await ctx.emit("job_end", job=job, reason="cancelled")
         except Exception as e:
-            logger.exception("Error in agent loop, id=%s", job.id)
             job.status = "error"
             await ctx.emit("job_error", job=job, error=e)
 
@@ -271,7 +248,6 @@ class AgentLoop:
         job = evt.job
         if job is None:
             return
-        # 取消单个 job：Task.cancel() 注入 CancelledError，打断当前执行
         target = self._jobs.get(job.id)
         if target is not None and target._task is not None:
             target._task.cancel()

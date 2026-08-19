@@ -927,6 +927,8 @@ const _connections = new Map();           // sessionId -> WebSocket
 const _sessionStates = new Map();         // sessionId -> { status: string }
 const _jobTrees = new Map();              // sessionId -> jobs[]
 let _streamingEl = null;                  // current streaming message element
+const _streamBuffer = new Map();          // sessionId -> 本轮流式累积文本（done 时持久化）
+const _thinkingBuffer = new Map();        // sessionId -> { el, text } 本轮流式累积 thinking（分块）
 
 function ensureConnection(sessionId) {
   const existing = _connections.get(sessionId);
@@ -973,22 +975,32 @@ function ensureConnection(sessionId) {
     switch (type) {
       case 'data':
         const innerData = d.data || {};
-        if (innerData.name === 'tool_call') {
-          const content = `${innerData.tool}(${JSON.stringify(innerData.arguments || {})})`;
-          const meta = { id: innerData.id, name: innerData.tool, arguments: innerData.arguments || {} };
-          await appendMessage(sessionId, 'tool_call', content, meta);
-          if (isCurrent) renderMessage('tool_call', content, meta);
-        } else if (innerData.name === 'tool_result') {
-          const resultContent = formatResult(innerData.result, innerData.error);
-          const resultMeta = { id: innerData.id, name: innerData.tool };
-          await appendMessage(sessionId, 'tool_result', resultContent, resultMeta);
-          if (isCurrent) renderMessage('tool_result', resultContent, resultMeta);
-        } else if (innerData.name === 'jobs') {
+        if (innerData.name === 'jobs') {
           _jobTrees.set(sessionId, innerData.jobs || []);
           if (isCurrent) renderJobTree(sessionId);
         }
         break;
-      case 'confirm_request': {
+      case 'tool_call': {
+        const toolName = (d.data && d.data.tool) || '';
+        const toolId = (d.data && d.data.id) || '';
+        const args = (d.data && d.data.arguments) || {};
+        const content = toolName ? `${toolName}(${JSON.stringify(args)})` : (d.content || '');
+        const meta = { id: toolId, name: toolName, arguments: args };
+        await appendMessage(sessionId, 'tool_call', content, meta);
+        if (isCurrent) renderMessage('tool_call', content, meta);
+        break;
+      }
+      case 'tool_result': {
+        const toolName = (d.data && d.data.tool) || '';
+        const toolId = (d.data && d.data.id) || '';
+        const error = (d.data && d.data.error) || '';
+        const resultContent = formatResult(d.content || '', error);
+        const meta = { id: toolId, name: toolName };
+        await appendMessage(sessionId, 'tool_result', resultContent, meta);
+        if (isCurrent) renderMessage('tool_result', resultContent, meta);
+        break;
+      }
+      case 'confirm': {
         const confData = d.data || {};
         const content = confData.description || 'Proceed?';
         await appendMessage(sessionId, 'confirm', content, { id: confData.id });
@@ -996,25 +1008,53 @@ function ensureConnection(sessionId) {
         break;
       }
       case 'message':
-        await appendMessage(sessionId, 'message', d.content || '', {});
-        if (isCurrent) renderMessage('message', d.content || '', {});
-        break;
-      case 'stream':
-        if (isCurrent) {
-          if (!_streamingEl) {
-            _streamingEl = document.createElement('div');
-            _streamingEl.className = 'event message';
-            _streamingEl.innerHTML = '<span class="label">message</span><div class="body"></div>';
-            $messageArea.insertBefore(_streamingEl, $statusBar);
+        if (d.stream) {
+          // 流式回复块：累积到缓冲（done 时持久化），当前会话实时渲染
+          _streamBuffer.set(sessionId, (_streamBuffer.get(sessionId) || '') + (d.content || ''));
+          if (isCurrent) {
+            if (!_streamingEl) {
+              _streamingEl = document.createElement('div');
+              _streamingEl.className = 'event message';
+              _streamingEl.innerHTML = '<span class="label">message</span><div class="body"></div>';
+              $messageArea.insertBefore(_streamingEl, $statusBar);
+            }
+            const body = _streamingEl.querySelector('.body');
+            if (body) body.textContent += d.content || '';
+            $messageArea.scrollTop = $messageArea.scrollHeight;
           }
-          const body = _streamingEl.querySelector('.body');
-          if (body) body.textContent += d.content || '';
-          $messageArea.scrollTop = $messageArea.scrollHeight;
+        } else {
+          // 非流式完整回复：直接渲染 + 持久化
+          if (isCurrent) renderMessage('message', d.content || '', {});
+          appendMessage(sessionId, 'message', d.content || '', {});
         }
         break;
       case 'error':
         await appendMessage(sessionId, 'error', `[${d.code}] ${d.message}`, {});
         if (isCurrent) renderMessage('error', `[${d.code}] ${d.message}`, {});
+        break;
+      case 'thinking':
+        if (d.stream) {
+          // 流式 thinking 分块：累积更新同一块（done 时持久化），当前会话实时渲染
+          const buf = _thinkingBuffer.get(sessionId) || { el: null, text: '' };
+          buf.text += d.content || '';
+          _thinkingBuffer.set(sessionId, buf);
+          if (isCurrent) {
+            if (!buf.el || !buf.el.isConnected) {
+              renderMessage('thinking', buf.text, {});
+              const all = Array.from($messageArea.querySelectorAll('.event.thinking'));
+              buf.el = all[all.length - 1] || null;
+            }
+            const summary = buf.el && buf.el.querySelector('.summary');
+            const body = buf.el && buf.el.querySelector('.body');
+            if (summary) summary.textContent = buf.text.length > 60 ? buf.text.slice(0, 60) + '...' : buf.text;
+            if (body) body.innerHTML = marked.parse(buf.text);
+            $messageArea.scrollTop = $messageArea.scrollHeight;
+          }
+        } else {
+          // 非流式完整 thinking：直接渲染 + 持久化
+          if (isCurrent) renderMessage('thinking', d.content || '', {});
+          appendMessage(sessionId, 'thinking', d.content || '', {});
+        }
         break;
       case 'status':
         const state = _sessionStates.get(sessionId) || { status: '' };
@@ -1031,12 +1071,23 @@ function ensureConnection(sessionId) {
           // Reset streaming element when new round starts
           if (d.content === 'thinking') {
             _streamingEl = null;
+            _streamBuffer.delete(sessionId);
+            _thinkingBuffer.delete(sessionId);
           }
         }
 
-        if (d.data && d.data.content) {
-          await appendMessage(sessionId, 'thinking', d.data.content, {});
-          if (isCurrent) renderMessage('thinking', d.data.content, {});
+        // job 完成：持久化本轮流式累积的内容（thinking 在前、message 在后，保持推理→回复顺序）
+        if (d.content === 'done') {
+          const th = _thinkingBuffer.get(sessionId);
+          if (th && th.text) {
+            appendMessage(sessionId, 'thinking', th.text, {});
+            _thinkingBuffer.delete(sessionId);
+          }
+          const streamed = _streamBuffer.get(sessionId);
+          if (streamed) {
+            appendMessage(sessionId, 'message', streamed, {});
+            _streamBuffer.delete(sessionId);
+          }
         }
         break;
     }

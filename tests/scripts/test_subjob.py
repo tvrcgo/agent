@@ -41,7 +41,7 @@ async def test_result_aggregation():
     ctx = AgentContext()
     job = MockJob()
 
-    def mock_subjob(content, parent_job, ctx):
+    async def mock_subjob(content, parent_job, ctx):
         future: asyncio.Future[str] = asyncio.get_event_loop().create_future()
         future.set_result(f"Result for: {content}")
         return future
@@ -69,7 +69,7 @@ async def test_too_many_jobs():
     ctx = AgentContext()
     job = MockJob()
 
-    def mock_subjob(content, parent_job, ctx):
+    async def mock_subjob(content, parent_job, ctx):
         future: asyncio.Future[str] = asyncio.get_event_loop().create_future()
         future.set_result(f"Result for: {content}")
         return future
@@ -85,18 +85,18 @@ async def test_too_many_jobs():
 async def test_max_depth_reached():
     """Subjob returns error when max depth is reached."""
     from agent.tools.subjob import SubJobTool
-    from agent.core.loop import AgentContext, Job, InputMessage
+    from agent.core.io import InputMessage
+    from agent.core.loop import AgentContext, Job
 
     ctx = AgentContext()
     parent_job = Job(
         id="parent-job",
-        session_id="parent-session",
         status="thinking",
         input=InputMessage(content="test"),
     )
 
     calls = []
-    def mock_subjob(content, pj, c):
+    async def mock_subjob(content, pj, c):
         calls.append(content)
         future: asyncio.Future[str] = asyncio.get_event_loop().create_future()
         future.set_result(f"Error: maximum sub-job depth (2) reached")
@@ -114,24 +114,23 @@ async def test_max_depth_reached():
 async def test_parallel_execution():
     """Multiple subjobs run in parallel and aggregate results."""
     from agent.tools.subjob import SubJobTool
-    from agent.core.loop import AgentContext, Job, InputMessage
+    from agent.core.io import InputMessage
+    from agent.core.loop import AgentContext, Job
 
     ctx = AgentContext()
     parent_job = Job(
         id="parent-job",
-        session_id="parent-session",
         status="thinking",
         input=InputMessage(content="test"),
     )
 
     results = {}
-    def mock_subjob(content, pj, c):
+    async def mock_subjob(content, pj, c):
         future: asyncio.Future[str] = asyncio.get_event_loop().create_future()
-        async def complete():
-            await asyncio.sleep(0.1)
-            results[content] = f"Result for {content}"
-            return results[content]
-        return asyncio.ensure_future(complete())
+        await asyncio.sleep(0.1)
+        results[content] = f"Result for {content}"
+        future.set_result(results[content])
+        return future
 
     ctx.subjob = lambda c, pj, cx: mock_subjob(c, pj, cx)
 

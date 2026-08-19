@@ -13,7 +13,8 @@ from websockets.asyncio.server import Server, ServerConnection
 from websockets.exceptions import ConnectionClosed
 
 from agent.core.plugin import Plugin
-from agent.core.loop import AgentContext, InputMessage, Job, MessageEvent
+from agent.core.io import InputMessage, OutputMessage
+from agent.core.loop import AgentContext
 from agent.core.events import Event
 
 
@@ -25,7 +26,7 @@ class HeartbeatEvent:
     type: str = "heartbeat"
 
 
-AgentEvent = MessageEvent | HeartbeatEvent
+AgentEvent = OutputMessage | HeartbeatEvent
 
 
 def _serialize_event(event: AgentEvent) -> str:
@@ -152,7 +153,7 @@ class WebSocketPlugin(Plugin):
         session_id = qs.get("session_id", [None])[0]
 
         if not session_id:
-            error_event = MessageEvent(type="error", data={"code": "bad_request", "message": "session_id is required"})
+            error_event = OutputMessage(type="error", data={"code": "bad_request", "message": "session_id is required"}, session_id="")
             await ws.send(_serialize_event(error_event))
             await ws.close(4000, "session_id is required")
             return
@@ -189,15 +190,9 @@ class WebSocketPlugin(Plugin):
                     else:
                         continue
 
-                    job = Job(
-                        id=session_id,
-                        session_id=session_id,
-                        status="pending",
-                        input=input_msg,
-                    )
-                    await self._ctx.emit("msg_input", job=job)
+                    await self._ctx.emit("msg_input", input=input_msg)
                 except (json.JSONDecodeError, ValueError, KeyError) as e:
-                    error_event = MessageEvent(type="error", data={"code": "parse_error", "message": str(e)})
+                    error_event = OutputMessage(type="error", data={"code": "parse_error", "message": str(e)}, session_id=session_id)
                     await session.emit(error_event)
         except websockets.ConnectionClosed:
             pass
@@ -216,13 +211,10 @@ class WebSocketPlugin(Plugin):
             pass
 
     async def _on_output(self, ctx: AgentContext, evt: Event) -> None:
-        job = evt.job
-        if job is None or job.output is None:
+        output = evt.data.get("output")
+        if output is None:
             return
-        session = self._sessions.get(job.session_id)
+        session = self._sessions.get(output.session_id)
         if session is None:
             return
-        events = job.output.events
-        job.output.events = []
-        for event in events:
-            await session.emit(event)
+        await session.emit(output)

@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 
 from agent.core.plugin import Plugin
 from agent.core.events import Event
+from agent.core.io import OutputMessage
 
 if TYPE_CHECKING:
     from agent.core.loop import AgentContext, Job
@@ -35,7 +36,6 @@ class ConfirmPlugin(Plugin):
         req = evt.request
         if job is None or req is None:
             return
-        # 第二层：向 UI 发起确认请求，阻塞等决策
         decision = await ctx.emit(
             "req:confirm_ui", job,
             timeout=self._timeout,
@@ -60,16 +60,17 @@ class ConfirmPlugin(Plugin):
         ctx.on("cmd_confirm", on_cmd)
         try:
             await self._push_confirm(job, confirm_id, ui_req.data.get("confirm_description", ""))
-            # 等待前端决策（on_cmd 显式 done），超时返回 None
             return await ui_req.wait(self._timeout)
         finally:
             ctx.off("cmd_confirm", on_cmd)
 
     async def _push_confirm(self, job: Job, confirm_id: str, description: str) -> None:
-        if job.output is not None and self._ctx is not None:
-            from agent.core.loop import MessageEvent
-            job.output.events.append(MessageEvent(
-                type="confirm_request",
-                data={"id": confirm_id, "description": description},
-            ))
-            await self._ctx.emit("msg_output", job=job)
+        if self._ctx is not None:
+            await self._ctx.emit(
+                "msg_output",
+                output=OutputMessage(
+                    type="confirm",
+                    data={"id": confirm_id, "description": description},
+                    session_id=job.id,
+                ),
+            )

@@ -22,7 +22,6 @@ DEFAULT_REVIEW_PROMPT = (
 
 
 class ToolGuardPlugin(Plugin):
-    # 工具执行守卫：审查清单中的工具交 flash 判断，dangerous 委托确认
 
     name = "tool_guard"
 
@@ -65,7 +64,6 @@ class ToolGuardPlugin(Plugin):
             if verdict == "safe":
                 continue
 
-            # 委托确认，deny 则阻断：记录待剔除，循环外统一处理
             response = await ctx.emit(
                 "req:request_confirm", job,
                 confirm_description=f"Tool '{tc.name}': {tc.arguments} (verdict: {verdict})",
@@ -75,7 +73,6 @@ class ToolGuardPlugin(Plugin):
                 blocked.append(tc)
 
         # 循环外统一剔除（避免迭代中修改列表）
-        # 未执行不触发 tool_start/tool_end；emit tool_error 供 session 持久化失败结果
         for tc in blocked:
             reason = f"Tool '{tc.name}' execution denied by user."
             await ctx.emit("tool_error", job=job, tool_call=tc, error=reason)

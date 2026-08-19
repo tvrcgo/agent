@@ -6,7 +6,8 @@ import uuid
 from typing import TYPE_CHECKING
 
 from agent.core.plugin import Plugin
-from agent.core.loop import AgentContext, Job, InputMessage, MessageEvent
+from agent.core.io import InputMessage, OutputMessage
+from agent.core.loop import AgentContext, Job
 from agent.core.events import Event
 
 
@@ -39,7 +40,7 @@ class SubJobPlugin(Plugin):
         job = evt.job
         if job is None or ctx._self is None:
             return
-        session_id = job.session_id
+        root_session = self._root_session(job.id)
         jobs_data = [
             {
                 "id": j.id,
@@ -49,45 +50,54 @@ class SubJobPlugin(Plugin):
                 "content": j.input.content if j.input else "",
             }
             for j in ctx._self._jobs.values()
-            if j.session_id == session_id
+            if self._root_session(j.id) == root_session
         ]
-        if job.output is not None:
-            job.output.events.append(MessageEvent(type="data", data={"name": "jobs", "jobs": jobs_data}))
-            await ctx.emit("msg_output", job=job)
+        await ctx.emit(
+            "msg_output",
+            output=OutputMessage(type="data", session_id=root_session, data={"name": "jobs", "jobs": jobs_data}),
+        )
+
+    def _root_session(self, session_id: str) -> str:
+        """沿父子映射找到最顶层 session（root 调用方的会话）。"""
+        seen: set[str] = set()
+        cur = session_id
+        while cur in self._parent and cur not in seen:
+            seen.add(cur)
+            cur = self._parent[cur]
+        return cur
 
     async def _on_job_end(self, ctx: AgentContext, evt: Event) -> None:
         job = evt.job
         if job is None:
             return
-        future = self._pending.pop(job.id, None)
+        key = job.id
+        future = self._pending.pop(key, None)
         if future and not future.done():
-            result = job.output.content if job.output else ""
-            future.set_result(result)
-        self._depth.pop(job.id, None)
-        self._parent.pop(job.id, None)
+            future.set_result(job.turn.content if job.turn else "")
+        self._depth.pop(key, None)
+        self._parent.pop(key, None)
 
-    def _create_subjob(self, content: str, parent_job: Job, ctx: AgentContext) -> asyncio.Future[str]:
-        depth = self._depth.get(parent_job.id, 0)
+    async def _create_subjob(self, content: str, parent_job: Job, ctx: AgentContext) -> asyncio.Future[str]:
+        parent_session = parent_job.id
+        depth = self._depth.get(parent_session, 0)
 
         if depth >= self._max_sub_job_depth:
             future: asyncio.Future[str] = asyncio.get_event_loop().create_future()
             future.set_result(f"Error: maximum sub-job depth ({self._max_sub_job_depth}) reached")
             return future
 
-        sub_id = f"{parent_job.id}/{uuid.uuid4().hex[:8]}"
+        sub_session = f"{parent_job.id}:{uuid.uuid4().hex[:8]}"
         future = asyncio.get_event_loop().create_future()
-        self._pending[sub_id] = future
-        self._depth[sub_id] = depth + 1
-        self._parent[sub_id] = parent_job.id
+        self._pending[sub_session] = future
+        self._depth[sub_session] = depth + 1
+        self._parent[sub_session] = parent_job.id
 
-        sub_job = Job(
-            id=sub_id,
-            session_id=parent_job.session_id,
-            status="pending",
-            input=InputMessage(content=content, session_id=parent_job.session_id),
+        input_msg = InputMessage(
+            content=content,
+            session_id=sub_session,
         )
 
-        asyncio.create_task(ctx.emit("msg_input", job=sub_job))
+        await ctx.emit("msg_input", input=input_msg)
         return future
 
     def unload(self) -> None:

@@ -1,6 +1,46 @@
 # CHANGELOG
 > 新内容放前面，同一天内容合并；版本号和PR ID、Issue ID没有可省略
 
+## [unreleased] - 2026-08-18
+
+### 核心摘要
+输出消息统一由 MessagePlugin 翻译发出：loop/core/tool 只 emit 领域事件，不感知输出细节。I/O 消息模型（`InputMessage`/`OutputMessage`）独立为 `core/io.py` 共享模块，插件间零相互依赖。`Event{name, job, data, request}` 扁平结构，`input`/`output` 均经 `data` 传递。内容类输出统一 `thinking`/`message`（流式用 `stream` 属性），工具调用/结果独立 `tool_call`/`tool_result` 类型。`Job` 不持有 `session_id`，`job.id` 即 session 身份，loop 不感知 session 概念。subjob 递归复用 msg_input/msg_output：子任务独立 session_id 经 `msg_input` 创建独立 job；父子关联由 SubJobPlugin 自维护（以 `job.id` 为 key）。
+
+### 变更
+- 新增：`agent/plugins/message.py`（MessagePlugin）——监听领域事件（llm_start/llm_chunk/llm_end/tools_start/tool_start/tool_end/job_end/job_error）统一构造并发出 `msg_output`；`thinking`/`message`/`status`/`tool_call`/`tool_result` 全由此翻译
+- 新增：`agent/core/io.py`——`InputMessage`/`OutputMessage`/`OutputType` 独立共享模块，供 core 与各插件引用，避免插件间依赖
+- 变更：`Job` 移除 `session_id` 字段（`job.id` 即 session 身份，loop 不感知 session）；各输出点 `session_id` 统一取 `job.id`；subjob 父子映射 `_pending`/`_depth`/`_parent` 以 `job.id` 为 key
+- 变更：`loop.py` 移除所有 `msg_output` 发出——流式 chunk 经 on_chunk 转发 `llm_chunk` 事件，非流式 thinking/message 与终态 status 由 MessagePlugin 从 `llm_end`/`tools_start`/`job_end`/`job_error` 翻译
+- 变更：`tool.py` 工具执行只 emit `tool_start`/`tool_end`（纯执行，无状态检查），`tool_call`/`tool_result` 输出由 MessagePlugin 翻译
+- 变更：`OutputMessage.type` 用 Literal 固化类型集合；`tool_call`/`tool_result` 的 `content` 承载展示文本、`data` 承载 id/tool/arguments/error；`confirm` 类型精简
+- 变更：日志归属——有现成事件承载的日志（job_start/llm_start/llm_end/tool_start/tool_end/job_end/job_error）由 LoggingPlugin 输出；无事件承载的调度日志（queued/truncated/dequeued）直接在 loop 写 logger，不新增事件
+- 变更：`InputMessage`/`OutputMessage` 移除 `job_id` 字段（消息规范不泄漏内部调度概念）
+- 变更：websocket/queue 发 `msg_input` 只带 `input`，不构造伪造 `Job`
+- 变更：`SubJobPlugin` 子任务用独立 session_id（`f"{parent.id}:{uuid}"`）；`_on_job_end` 按 `job.id` 匹配回填结果；`_send_jobs` 沿父子映射找 root session 收集整棵 job 树
+- 测试：`test_loop_followup.py` 新增 msg_input 构造验证 + subjob 独立 session 集成验证；`test_e2e.py`/`test_ws.py`/`test_protocol.py`/`test_mcp.py` 更新 tool_call/tool_result 断言为顶层类型
+- 文档：`AGENTS.md` 更新 I/O 消息规范、MessagePlugin 输出归属、Event 结构与 Job 树说明
+- 前端：`playground/index.html` 修复 thinking/message 渲染顺序与切换会话后的消息持久化
+
+## [unreleased] - 2026-08-17
+
+### 核心摘要
+修复 follow-up 多轮文本轮输出覆盖，输出外发收敛为**增量事件外发**，并以 `OutputMessage`/`InputMessage` 定型 loop 状态机的输入输出规范：
+1. **迁移**：`job.output.content` 移除，文本统一放 `job.turn.content`（每轮重建、天然清零、工具轮为空；语义为最后一个 turn 的输出）。
+2. **逐轮推送**：SessionPlugin 的 `turn_end` 在非流式下每个有文本的 turn 即推送独立 `message` 输出，保留先后关系；流式下跳过（`stream` 已实时渲染）。
+3. **职责收敛**：`job_end` 只发终态 status，不再兜底推送 message（删除 `_sent_turn_messages` 集合）。
+4. **增量外发**：`msg_output` 事件载荷 `output=<OutputMessage>` 直接承载单个输出消息，移除 `job.output` 缓冲锚点与消费者清空摘取逻辑，消除多消费者并发抢同一缓冲的竞态。
+5. **I/O 规范**：`OutputMessage`（输出）与 `InputMessage`（输入）对称，构成 loop 状态机的输入输出消息规范，均含 `session_id` 自包含归属。
+
+subjob 结果回传改读 `job.turn.content`（最后一个 turn 的输出），queue payload 只含单事件。
+
+### 变更
+- 新增：`OutputMessage` 输出消息类型（`type`/`content`/`data`/`session_id`，与 `InputMessage` 对应），导出至 `agent.core`；移除旧 `Job.output` 锚点字段及相关恒真守卫
+- 变更：`msg_output` 事件载荷改为 `output` 字段携带单个 `OutputMessage`（不用 `event` 名——`ctx.emit` 首参就叫 event）；websocket/queue 消费者直接发 `evt.data["output"]`
+- 变更：所有产出点（session / confirm / subjob / loop 流式 on_chunk）构造 `OutputMessage` 时带 `session_id=job.session_id`；websocket 错误响应带当前连接 `session_id`；消费者以 `output.session_id` 为准、`job.session_id` 兜底
+- 变更：`queue.py` 输出 payload 只含单事件 `events`
+- 测试：`tests/scripts/test_loop_followup.py` 改为监听 `msg_output` 收集 `output` 断言，并断言 `session_id` 填充
+- 文档：`tests/README.md` 登记新测试
+
 ## [unreleased] - 2026-08-15
 
 ### 核心摘要
