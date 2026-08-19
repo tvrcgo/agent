@@ -925,6 +925,7 @@ async function createNewSession() {
 
 const _connections = new Map();           // sessionId -> WebSocket
 const _sessionStates = new Map();         // sessionId -> { status: string }
+const _maxIterPrompting = new Map();      // sessionId -> 正在弹「是否继续」确认框（防重复）
 const _jobTrees = new Map();              // sessionId -> jobs[]
 let _streamingEl = null;                  // current streaming message element
 const _streamBuffer = new Map();          // sessionId -> 本轮流式累积文本（done 时持久化）
@@ -1060,6 +1061,23 @@ function ensureConnection(sessionId) {
         const state = _sessionStates.get(sessionId) || { status: '' };
         state.status = d.content;
         _sessionStates.set(sessionId, state);
+
+        // 达到最大迭代次数：提醒用户是否继续（agent 层面不介入，前端触发新一轮）
+        if (d.content === 'error' && d.data && d.data.reason === 'Reached maximum iterations') {
+          if (!_maxIterPrompting.has(sessionId)) {
+            _maxIterPrompting.set(sessionId, true);
+            const ok = window.confirm('已达到最大迭代次数，是否继续运行？');
+            if (ok) {
+              const conn = _connections.get(sessionId);
+              if (conn && conn.readyState === WebSocket.OPEN) {
+                conn.send(JSON.stringify({ type: 'chat', payload: { content: '请继续' } }));
+                await appendMessage(sessionId, 'you', '继续运行', {});
+                if (isCurrent) renderMessage('you', '继续运行', {});
+              }
+            }
+            _maxIterPrompting.delete(sessionId);
+          }
+        }
 
         if (isCurrent) {
           if (d.content === 'done') {

@@ -1,6 +1,20 @@
 # CHANGELOG
 > 新内容放前面，同一天内容合并；版本号和PR ID、Issue ID没有可省略
 
+## [unreleased] - 2026-08-19
+
+### 核心摘要
+playground 前端在 job 达到 `max_iterations` 时询问用户是否继续。agent 层零改动：后端在达上限时本就发出 `status:error`（`data.reason="Reached maximum iterations"`），前端识别该事件后弹确认框；用户选择继续则向同一 session 重发 chat 触发新 job，依赖会话持久化冷加载延续上下文；选择停止则保持收尾。可重复询问（每次达上限都询问）。
+
+### 变更
+- 新增：`playground/index.html` `case 'status'` 分支识别 `error + data.reason="Reached maximum iterations"`，弹「已达到最大迭代次数，是否继续运行？」确认框；确认后向同一 session 重发 `chat`（"请继续"）触发新 job，并追加「继续运行」user 消息到会话历史
+- 变更：`_maxIterPrompting` 标记防止同一 session 弹窗期间重复弹（每次达上限可重新询问）
+
+### 上下文
+- 长任务常在一个会话内跑不完 `max_iterations`（默认 100）轮，此前直接以 `max_iterations` 错误收尾，用户无法继续
+- 复用现有事件链：loop 达上限 → `job_end(reason=max_iterations)` → MessagePlugin 翻译 `status:error`；会话按 session_id 持久化，新 job 冷加载历史延续上下文
+- 影响范围：仅 `playground/index.html`；agent 层（`agent/`）零改动
+
 ## [unreleased] - 2026-08-18
 
 ### 核心摘要
