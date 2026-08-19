@@ -106,7 +106,7 @@ async def test_max_depth_reached():
 
     tool = SubJobTool()
     result = await tool.execute({"jobs": [{"content": "task A"}]}, ctx=ctx, job=parent_job)
-    
+
     assert "maximum sub-job depth" in result
     print(f"  max depth error returned: {result[:60]}...")
 
@@ -141,7 +141,7 @@ async def test_parallel_execution():
         {"content": "task-C"},
     ]
     result = await tool.execute({"jobs": jobs}, ctx=ctx, job=parent_job)
-    
+
     assert "Sub-job 1" in result
     assert "Sub-job 2" in result
     assert "Sub-job 3" in result

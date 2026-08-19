@@ -275,16 +275,16 @@ async def test_msg_input_job_construction():
     loop._handle_command = spy_handle_command
 
     created = {}
-    real_on_input = loop._on_input
 
     async def tracking_on_input(ctx, evt):
         created["input_msg"] = evt.data.get("input")
-        await real_on_input(ctx, evt)
 
+    # loop 只监听 msg_input，直接消费 InputMessage 端口
+    loop.ctx.on("msg_input", loop._on_input)
     loop.ctx.on("msg_input", tracking_on_input)
 
-    # 外部风格：无事件级 job_id → job.id = session_id
     await loop.ctx.emit("msg_input", input=InputMessage(content="root chat", session_id="sid-A"))
+
     job = captured.get("job")
     assert job is not None, "_on_input did not construct a job"
     assert job.id == "sid-A"
@@ -292,11 +292,13 @@ async def test_msg_input_job_construction():
 
     # 消息体不含 job_id（消息规范不泄漏内部调度）
     input_msg = created["input_msg"]
+    assert isinstance(input_msg, InputMessage), f"msg_input payload: {input_msg!r}"
     assert not hasattr(input_msg, "job_id"), "InputMessage leaked job_id"
     assert input_msg.session_id == "sid-A"
 
     # 恢复（避免污染后续用例）
     loop._handle_chat = real_handle_chat
+    loop._handle_command = real_handle_command
 
     print(f"  root job id={job.id}")
     print(f"  input fields={[a for a in ('content','type','action','data','session_id') if hasattr(input_msg, a)]}")

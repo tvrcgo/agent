@@ -94,6 +94,7 @@ class SubJobPlugin(Plugin):
 
         input_msg = InputMessage(
             content=content,
+            type="chat",
             session_id=sub_session,
         )
 

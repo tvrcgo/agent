@@ -5,7 +5,7 @@
 - [ ] `load(ctx, config)` 注册 `request_confirm`、`confirm_ui` 两个事件
 - [ ] `_on_request_confirm`：无 req/job 时直接返回
 - [ ] `_on_request_confirm`：发起第二层请求 `await ctx.emit("req:confirm_ui", job, timeout=self._timeout, confirm_id=req.id, ...)`，拿到决策后**隐式返回** `{"decision": ...}`
-- [ ] `_on_confirm_ui`：emit `msg_output`，载荷 `output` 携带 `OutputType.CONFIRM` 的 OutputMessage
+- [ ] `_on_confirm_ui`：emit `msg_output`，载荷 `output` 携带 `OutputMessage(type="confirm")`，data 带 id/description（直接构造 core 端口，插件间零依赖）
 - [ ] `_on_confirm_ui`：`cmd_confirm` 闭包匹配 `job + confirm_id` 后 `ui_req.done(...)`，超时卸载监听
 - [ ] 第一层超时（`ctx.emit("req:request_confirm")` 返回 None）→ 隐式返回 `{"decision": "deny"}`
 - [ ] 卸载后 `_ctx is None`，无 pending 残留

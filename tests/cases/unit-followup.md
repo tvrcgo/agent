@@ -4,7 +4,7 @@
 
 用户 follow-up 消息（追加/纠正确认）在 agent 运行中排队，下轮迭代开始时被消费。此时会产生**多轮文本轮**（如「先回答 A，用户再说 B，再回答 B」）。回归验证这些场景下的输出消息组织。
 
-文本统一放在 `job.turn.content`（每轮重建、天然清零、工具轮为空）。输出经 `msg_output` 事件增量外发——载荷 `output` 直接携带单个 `OutputMessage`（`type`/`content`/`data`/`session_id`），与 `InputMessage` 对应构成 I/O 规范，消息自包含 session 归属。
+文本统一放在 `job.turn.content`（每轮重建、天然清零、工具轮为空）。输出经 `msg_output` 事件增量外发——载荷 `output` 直接携带单个 `OutputMessage`（`type`/`content`/`data`/`session_id`，core 的输出端口，定义于 `core/io.py`），由 MessagePlugin 从领域事件翻译而来，消息自包含 session 归属。输入经 `msg_input`（载荷 `InputMessage`，core 的输入端口），loop 直接消费。
 
 ## 测试用例
 

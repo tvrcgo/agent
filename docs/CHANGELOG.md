@@ -4,6 +4,21 @@
 ## [unreleased] - 2026-08-19
 
 ### 核心摘要
+I/O 收敛为**端口契约**：`core/io.py` 是 core 的 I/O 端口（`InputMessage` 输入端口 + `OutputMessage` 输出端口），loop 直接消费 `msg_input`，插件/MessagePlugin 直接构造端口类型发 `msg_output`，无翻译层。真正客户端协议（JSON envelope 线格式）只在 websocket/queue。插件间零相互依赖（发消息 import core 端口，不 import message plugin）。
+
+### 变更
+- 新增：`agent/core/io.py`（端口契约）——`InputMessage`/`OutputMessage`/`OutputType` 定义，`InputMessage.type` 用 `Literal["chat", "command"]` 注解
+- 变更：`loop.py` 直接监听 `msg_input` 消费 `InputMessage`（Job.input 类型），无翻译层、无 AgentInput
+- 变更：MessagePlugin 回归纯输出翻译（领域事件 → `OutputMessage`），删除输入翻译链与 `agent_output` 翻译
+- 变更：websocket/queue 输入侧构造 `InputMessage` 发 `msg_input`（外部协议解析边界）；输出侧 asdict 序列化
+- 变更：ConfirmPlugin/SubJobPlugin 直接构造 `OutputMessage` 发 `msg_output`（import core 端口，插件间零依赖）
+- 变更：`agent/core/__init__.py` 导出 `InputMessage`/`OutputMessage`
+- 测试：三个测试脚本回归 msg_input/InputMessage 直连模式，全绿
+
+### 上下文
+- 本轮探索了"msg_input→agent_input 翻译层 + agent_output 统一事件"方向后回退：翻译层制造了两态切换（每段一端无约束），且 agent_input/agent_output 与 msg_input/msg_output 字段重复无本质区别。最终按端口契约收敛：端口在 core（插件依赖 core 合法），信任边界在外部协议解析处，校验与类型同源（注解即 schema）。
+
+### 核心摘要
 job 错误（达 `max_iterations`、异常）输出从 `status(content=error)` 改为独立 `error` 类型事件：MessagePlugin 的 `_on_job_end`（`job.status=="error"`）与 `_on_job_error` 统一发出 `OutputMessage(type="error", content=<reason>, data={"reason": <reason>})`，与 websocket 协议错误（code/message）共用 `error` 类型。playground 前端在收到达上限错误事件后弹「已达到最大迭代次数，是否继续运行？」确认框；用户选择继续则向同一 session 重发 chat 触发新 job（会话冷加载延续上下文），选择停止则保持收尾。可重复询问。
 
 ### 变更
