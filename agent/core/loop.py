@@ -234,16 +234,19 @@ class AgentLoop:
             await ctx.emit("job_end", job=job, reason="max_iterations")
 
         except asyncio.CancelledError:
-            # 用户取消（cmd_cancel → Task.cancel）：有序收尾，不再向上传播
+            # 用户取消（cmd_cancel → Task.cancel）：有序收尾，不再向上传播。
+            # shield 防止二次取消打断收尾，保证 job_end 必发
             job.status = "cancelled"
-            await ctx.emit("job_end", job=job, reason="cancelled")
+            try:
+                await asyncio.shield(ctx.emit("job_end", job=job, reason="cancelled"))
+            except asyncio.CancelledError:
+                pass
         except Exception as e:
             job.status = "error"
             await ctx.emit("job_error", job=job, error=e)
             await ctx.emit("job_end", job=job, reason="error")
 
         finally:
-            await ctx.emit("job_complete", job=job)
             self._jobs.pop(job.id, None)
             self._message_queues.pop(job.id, None)
             if self._queue_jobs:

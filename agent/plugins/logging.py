@@ -33,7 +33,6 @@ class LoggingPlugin(Plugin):
         ctx.on("tool_end", self._on_tool_end)
         ctx.on("job_end", self._on_job_end)
         ctx.on("job_error", self._on_error)
-        ctx.on("job_complete", self._on_complete)
 
         logger.info("LoggingPlugin initialized")
 
@@ -126,6 +125,8 @@ class LoggingPlugin(Plugin):
             logger.warning("[%s] Reached maximum iterations", jid)
         else:
             logger.info("[%s] job finished: %s", jid, reason)
+        # job 结束：清理 per-job 计数
+        self._iteration_counts.pop(jid, None)
 
     async def _on_error(self, ctx: AgentContext, evt: Event) -> None:
         job = evt.job
@@ -138,10 +139,3 @@ class LoggingPlugin(Plugin):
             logger.error("[%s] job error: %s", jid, error, exc_info=(type(error), error, error.__traceback__))
         else:
             logger.error("[%s] job error: %s", jid, error)
-
-    async def _on_complete(self, ctx: AgentContext, evt: Event) -> None:
-        job = evt.job
-        if job is None:
-            return
-        jid = job.id
-        self._iteration_counts.pop(jid, None)

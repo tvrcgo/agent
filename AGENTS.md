@@ -47,7 +47,7 @@ job 运行中收到的 chat 消息排队，下轮迭代开始前由 loop 写入 
 复杂任务可通过 `sub_job` 工具并行执行。子 Job 基于父会话构造独立 `session_id`（不与父共用），经 `msg_input` 递归创建为普通 job（`job.id` 即子 session），流程与外部输入一致；父子关联、结果回传由 SubJobPlugin 自维护（监听 `job_end` 按 `job.id` 匹配，结果取 `job.turn.content`）。`max_sub_job_depth` 限制递归深度。
 
 ### 插件生命周期
-`agent_start` → `job_start` → `llm_start` → `llm_end` → `tools_start` / `tool_start` → 工具执行 → `tool_end` → `tools_end` → 循环 → `job_end` / `job_error` → `job_complete` / `agent_stop`。工具**未执行**的异常情形（被守卫拒绝 / 被截断 fail）走 `tool_error`（记录失败结果，不触发 tool_start/tool_end）。`msg_output` 由 MessagePlugin 统一发出（见 I/O 消息规范）。`cmd_<action>` 钩子处理 UI 操作。
+`agent_start` → `job_start` → `llm_start` → `llm_end` → `tools_start` / `tool_start` → 工具执行 → `tool_end` → `tools_end` → 循环 → `job_end` / `job_error` / `agent_stop`。`job_end` 是 job 结束的唯一钩子：所有终止路径（done / max_iterations / truncated / cancelled / error）必发，plugin 的资源清理一律监听 `job_end`。工具**未执行**的异常情形（被守卫拒绝 / 被截断 fail）走 `tool_error`（记录失败结果，不触发 tool_start/tool_end）。`msg_output` 由 MessagePlugin 统一发出（见 I/O 消息规范）。`cmd_<action>` 钩子处理 UI 操作。
 
 #### 工具执行阻断
 
