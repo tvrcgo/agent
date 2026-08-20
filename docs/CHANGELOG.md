@@ -1,7 +1,27 @@
 # CHANGELOG
 > 新内容放前面，同一天内容合并；版本号和PR ID、Issue ID没有可省略
 
-## [unreleased] - 2026-08-19
+## [unreleased] - 2026-08-20
+
+### 核心摘要
+事件系统引入**分发模式登记表**：分发模式（parallel / serial / fire 预留）由 `core/events.py` 的 `EVENT_MODES` 集中登记，事件契约化；API 保持单一 `ctx.emit`，监听方经 `Event.mode` 感知模式。`req:` 前缀废弃，confirm 通道迁移为 serial 事件 `confirm_request`。websocket 输出改 per-session 发送队列，解除慢客户端对流式推理的反压。
+
+### 变更
+- 变更：`core/events.py` 新增 `DispatchMode` 枚举与 `EVENT_MODES` 登记表（存量事件全量登记；`tools_start`/`confirm_request` 为 serial，其余 parallel）；`Event` 增 `mode` 字段（分发时注入），删除 `Request` 类与 `req:` 前缀分支
+- 变更：`EventBus.emit` 按登记表分发——serial 顺序执行、首个非 None 短路并作为返回值、异常记日志继续；parallel 并发观察、异常隔离；未登记事件（`cmd_<action>` 除外）按 parallel 分发并打 warning；fire 登记条目抛 NotImplementedError 预留
+- 变更：`loop.py` `AgentContext.emit` 移除 `timeout` 参数
+- 变更：`plugins/confirm.py` 监听 `confirm_request`（serial），第二层 `req:confirm_ui` 自请求结构内部化为 `_ask_ui`（future + `wait_for` 超时，一次性 `cmd_confirm` 监听 finally 卸载）
+- 变更：`plugins/tool_guard.py` 确认请求改发 `confirm_request`
+- 变更：`plugins/websocket.py` `ClientSession` 改为 per-session `asyncio.Queue` + 单 writer task：`_on_output` 入队即返回（反压解除），confirm 输出入队后 `flush()` 保证送达，heartbeat 同队（消除并发 send），`agent_stop` 前全 session flush
+- 修复：`plugins/session.py` 存 `tool_calls` 快照（`list()` 拷贝）——E2E 发现 tool_guard 原地剔除共享列表导致 assistant 消息 tool_calls 变空、deny 后第二轮 LLM 请求 400
+- 修复：`core/model.py` `chat_stream` 错误处理——错误 body 在流上下文内 `aread()` 读取（原先访问流式响应 `.text` 抛 ResponseNotRead，掩盖真实 400 信息）
+- 文档：`AGENTS.md` 请求-响应原语段、Confirm Plugin 段、plugin 清单同步更新
+- 测试：`tests/cases/unit-plugins.md` 更新分发模式原语与 confirm 用例；分发模式原语、websocket 队列（FIFO/反压/close/heartbeat）验证通过，follow-up（7/7）与 subjob（6/6）回归全绿；playground E2E 全链路验证（流式渲染/confirm 批准拒绝/会话持久化/多轮上下文）通过
+
+### 上下文
+- 借鉴 cordis（cordiverse/cordis）的分发模式设计，但按项目哲学收敛：API 单一 `emit`，模式是集中登记的事件元数据而非名字前缀或多 API；fire 与 waterfall 均以"无用例不实现"原则仅留枚举占位
+- 反压修复落点选在 websocket I/O 边界（插件内部写循环），不引入 fire 事件与 loop flush——保住 loop 状态机对流程与顺序的完全控制
+
 
 ### 核心摘要
 I/O 收敛为**端口契约**：`core/io.py` 是 core 的 I/O 端口（`InputMessage` 输入端口 + `OutputMessage` 输出端口），loop 直接消费 `msg_input`，插件/MessagePlugin 直接构造端口类型发 `msg_output`，无翻译层。真正客户端协议（JSON envelope 线格式）只在 websocket/queue。插件间零相互依赖（发消息 import core 端口，不 import message plugin）。
