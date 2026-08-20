@@ -134,7 +134,11 @@ class ModelProvider:
 
         try:
             async with self._http.stream("POST", "/chat/completions", json=payload) as resp:
-                resp.raise_for_status()
+                if resp.status_code >= 400:
+                    # 错误 body 必须在流上下文中 read（退出上下文后流已关闭）
+                    body = (await resp.aread()).decode("utf-8", errors="replace")[:500]
+                    logger.error("Model HTTP %s: %s", resp.status_code, body)
+                    resp.raise_for_status()
                 async for line in resp.aiter_lines():
                     if not line or line == "data: [DONE]":
                         continue
@@ -178,8 +182,7 @@ class ModelProvider:
                     except json.JSONDecodeError:
                         pass
         except httpx.HTTPStatusError as e:
-            body = e.response.text[:500] if e.response else ""
-            logger.error("Model HTTP %s: %s", e.response.status_code, body)
+            logger.error("Model HTTP %s (status body logged above if streamable)", e.response.status_code)
             raise
         except Exception:
             logger.exception("Model stream request failed")
