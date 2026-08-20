@@ -73,12 +73,42 @@ class ClientSession:
     def __init__(self, ws: ServerConnection) -> None:
         self._ws = ws
         self.session_id: str | None = None
+        self._outgoing: asyncio.Queue[AgentEvent | None] = asyncio.Queue()
+        self._closed = asyncio.Event()
 
-    async def emit(self, event: AgentEvent) -> None:
+    def start(self) -> None:
+        asyncio.create_task(self._write_loop())
+
+    def enqueue(self, event: AgentEvent) -> None:
+        self._outgoing.put_nowait(event)
+
+    async def flush(self) -> None:
+        if not self._closed.is_set():
+            await self._outgoing.join()
+
+    def close(self) -> None:
+        self._outgoing.put_nowait(None)
+
+    async def _write_loop(self) -> None:
         try:
-            await self._ws.send(_serialize_event(event))
-        except websockets.exceptions.ConnectionClosed:
-            pass
+            while True:
+                event = await self._outgoing.get()
+                try:
+                    if event is None:
+                        break
+                    await self._ws.send(_serialize_event(event))
+                except websockets.exceptions.ConnectionClosed:
+                    break
+                finally:
+                    self._outgoing.task_done()
+        finally:
+            self._closed.set()
+            while True:
+                try:
+                    self._outgoing.get_nowait()
+                    self._outgoing.task_done()
+                except asyncio.QueueEmpty:
+                    break
 
 
 class _SuppressHandshakeNoise(logging.Filter):
@@ -128,6 +158,8 @@ class WebSocketPlugin(Plugin):
         await self._start_server()
 
     async def _on_agent_stop(self, ctx: AgentContext, evt: Event) -> None:
+        for session in self._sessions.values():
+            await session.flush()
         await self._stop_server()
         self.unload()
 
@@ -161,6 +193,7 @@ class WebSocketPlugin(Plugin):
         session = ClientSession(ws)
         session.session_id = session_id
         self._sessions[session_id] = session
+        session.start()
 
         logger.info("Client connected: %s, session_id=%s", ws.remote_address, session_id)
 
@@ -193,20 +226,21 @@ class WebSocketPlugin(Plugin):
                     await self._ctx.emit("msg_input", input=input_msg)
                 except (json.JSONDecodeError, ValueError, KeyError) as e:
                     error_event = OutputMessage(type="error", data={"code": "parse_error", "message": str(e)}, session_id=session_id)
-                    await session.emit(error_event)
+                    session.enqueue(error_event)
         except websockets.ConnectionClosed:
             pass
         finally:
             heartbeat_task.cancel()
             self._heartbeat_tasks.pop(session_id, None)
-            logger.info("Client disconnected: %s, session_id=%s", ws.remote_address, session_id)
+            session.close()
             self._sessions.pop(session_id, None)
+            logger.info("Client disconnected: %s, session_id=%s", ws.remote_address, session_id)
 
     async def _heartbeat(self, session: ClientSession) -> None:
         try:
             while True:
                 await asyncio.sleep(15)
-                await session.emit(HeartbeatEvent())
+                session.enqueue(HeartbeatEvent())
         except Exception:
             pass
 
@@ -217,4 +251,7 @@ class WebSocketPlugin(Plugin):
         session = self._sessions.get(output.session_id)
         if session is None:
             return
-        await session.emit(output)
+        session.enqueue(output)
+        if output.type == "confirm":
+            # confirm 依赖送达：用户须先看到确认框，等待才有意义
+            await session.flush()
