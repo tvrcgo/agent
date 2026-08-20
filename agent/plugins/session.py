@@ -130,7 +130,8 @@ class SessionPlugin(Plugin):
         state.messages.append(AssistantMessage(
             content=response.text,
             thinking=response.thinking,
-            tool_calls=response.tool_calls,
+            # 拷贝快照：tool_guard 会在 tools_start 原地剔除共享列表，不能把同一引用存进会话
+            tool_calls=list(response.tool_calls) if response.tool_calls else None,
         ))
         if response.usage:
             state.last_prompt_tokens = response.usage.prompt_tokens
@@ -399,4 +400,3 @@ class SessionPlugin(Plugin):
             return SystemMessage(content=d.get("content"))
         else:
             return UserMessage(content=d.get("content"))
-
