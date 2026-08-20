@@ -15,8 +15,10 @@
 - 变更：`plugins/websocket.py` `ClientSession` 改为 per-session `asyncio.Queue` + 单 writer task：`_on_output` 入队即返回（反压解除），confirm 输出入队后 `flush()` 保证送达，heartbeat 同队（消除并发 send），`agent_stop` 前全 session flush
 - 修复：`plugins/session.py` 存 `tool_calls` 快照（`list()` 拷贝）——E2E 发现 tool_guard 原地剔除共享列表导致 assistant 消息 tool_calls 变空、deny 后第二轮 LLM 请求 400
 - 修复：`core/model.py` `chat_stream` 错误处理——错误 body 在流上下文内 `aread()` 读取（原先访问流式响应 `.text` 抛 ResponseNotRead，掩盖真实 400 信息）
+- 修复：`plugins/session.py` 监听 `job_end` 清理内存态会话尾部孤儿 tool_calls——E2E 发现 /cancel 打断工具执行后，assistant 消息已带 tool_calls 但 tool 结果缺失，下一次消息触发 DeepSeek 400（insufficient tool messages）；冷启动路径由 `_load_session` 兜底，热内存路径由 `_on_job_end` 及时清理
 - 文档：`AGENTS.md` 请求-响应原语段、Confirm Plugin 段、plugin 清单同步更新
 - 测试：`tests/cases/unit-plugins.md` 更新分发模式原语与 confirm 用例；分发模式原语、websocket 队列（FIFO/反压/close/heartbeat）验证通过，follow-up（7/7）与 subjob（6/6）回归全绿；playground E2E 全链路验证（流式渲染/confirm 批准拒绝/会话持久化/多轮上下文）通过
+- 测试：`tests/scripts/test_e2e.py` 扩展至 11 场景（fake LLM 无网络依赖）——echo 工具链路、subjob 递归聚合、流式、tool_guard+confirm（approve/deny）、取消、截断（length）、max_iterations、LLM 异常、max_concurrent 排队、follow-up steering 多轮、取消后孤儿 tool_calls 清理；新增 `tests/cases/e2e-playground.md`（playground 11 场景：会话连接/流式问答/工具渲染/confirm 批准拒绝/持久化/多轮上下文/cancel/compress/subjob 任务树/孤儿清理回归），全部通过
 
 ### 上下文
 - 借鉴 cordis（cordiverse/cordis）的分发模式设计，但按项目哲学收敛：API 单一 `emit`，模式是集中登记的事件元数据而非名字前缀或多 API；fire 与 waterfall 均以"无用例不实现"原则仅留枚举占位

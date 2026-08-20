@@ -38,6 +38,7 @@ class SessionPlugin(Plugin):
 
     def load(self, ctx: AgentContext, config: dict = {}) -> None:
         ctx.on("job_start", self._on_job_start)
+        ctx.on("job_end", self._on_job_end)
         ctx.on("turn_start", self._on_turn_start)
         ctx.on("llm_start", self._on_llm_start)
         ctx.on("llm_end", self._on_llm_end)
@@ -78,6 +79,19 @@ class SessionPlugin(Plugin):
         state = self._get_or_load(job.id)
         state.messages.append(UserMessage(content=content))
         self._append(job.id, {"role": "user", "content": content})
+
+    async def _on_job_end(self, ctx: AgentContext, evt: Event) -> None:
+        # job 终止（cancelled/error）时工具执行可能被打断：
+        # assistant 消息已带 tool_calls 但后续 tool 结果缺失，形成孤儿调用。
+        # 下次请求 DeepSeek 会报 400（insufficient tool messages），
+        # 在内存态及时清理尾部不完整轮次（冷启动路径由 _load_session 兜底）。
+        job = evt.job
+        if job is None:
+            return
+        state = self._sessions.get(job.id)
+        if state is None:
+            return
+        self._clean_orphan_tool_calls(state)
 
     async def _on_turn_start(self, ctx: AgentContext, evt: Event) -> None:
         # 当前时间作为提示段追加到 job.turn.prompts
