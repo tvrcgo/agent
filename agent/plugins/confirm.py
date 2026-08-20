@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import logging
+import uuid
 from typing import TYPE_CHECKING
 
 from agent.core.plugin import Plugin
@@ -24,43 +26,41 @@ class ConfirmPlugin(Plugin):
     def load(self, ctx: AgentContext, config: dict = {}) -> None:
         self._ctx = ctx
         self._timeout = float(config.get("timeout", 120))
-        ctx.on("req:request_confirm", self._on_request_confirm)
-        ctx.on("req:confirm_ui", self._on_confirm_ui)
+        ctx.on("confirm_request", self._on_confirm_request)
         logger.info("ConfirmPlugin loaded: timeout=%ds", self._timeout)
 
     def unload(self) -> None:
         self._ctx = None
 
-    async def _on_request_confirm(self, ctx: "AgentContext", evt: Event) -> None:
+    async def _on_confirm_request(self, ctx: AgentContext, evt: Event) -> dict:
         job = evt.job
-        req = evt.request
-        if job is None or req is None:
-            return
-        decision = await ctx.emit(
-            "req:confirm_ui", job,
-            timeout=self._timeout,
-            confirm_id=req.id,
-            confirm_description=req.data.get("confirm_description", ""),
-        )
-        # 隐式返回，总线自动 req.done
+        if job is None:
+            return {"decision": "deny"}
+        decision = await self._ask_ui(job, evt.data.get("confirm_description", ""))
+        # serial 响应方：返回非 None（决策 dict）→ 短路并作为 emit 返回值
         return decision if decision is not None else {"decision": "deny"}
 
-    async def _on_confirm_ui(self, ctx: "AgentContext", evt: Event) -> None:
-        job = evt.job
-        ui_req = evt.request
-        if job is None or ui_req is None:
-            return
-        confirm_id = ui_req.data.get("confirm_id", "")
+    async def _ask_ui(self, job: Job, description: str) -> dict | None:
+        confirm_id = uuid.uuid4().hex[:8]
+        future: asyncio.Future[dict | None] = asyncio.get_event_loop().create_future()
 
-        async def on_cmd(ctx2: "AgentContext", evt2: Event) -> None:
+        async def on_cmd(ctx2: AgentContext, evt2: Event) -> None:
             # cmd_confirm 带的是新构造的 Job（id=session_id），按 id 匹配
-            if evt2.job is not None and evt2.job.id == job.id and evt2.data.get("confirm_id") == confirm_id:
-                ui_req.done({"decision": evt2.data.get("decision", "deny")})
+            if (evt2.job is not None and evt2.job.id == job.id
+                    and evt2.data.get("confirm_id") == confirm_id):
+                if not future.done():
+                    future.set_result({"decision": evt2.data.get("decision", "deny")})
 
+        ctx = self._ctx
+        if ctx is None:
+            return None
         ctx.on("cmd_confirm", on_cmd)
         try:
-            await self._push_confirm(job, confirm_id, ui_req.data.get("confirm_description", ""))
-            return await ui_req.wait(self._timeout)
+            await self._push_confirm(job, confirm_id, description)
+            try:
+                return await asyncio.wait_for(future, timeout=self._timeout)
+            except asyncio.TimeoutError:
+                return None
         finally:
             ctx.off("cmd_confirm", on_cmd)
 

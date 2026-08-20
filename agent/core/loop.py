@@ -81,9 +81,9 @@ class AgentContext:
     def off(self, event: str, handler: Any) -> None:
         self._bus.off(event, handler)
 
-    async def emit(self, event: str, job: Job | None = None, timeout: float = 120, **data: Any) -> Any:
-        # 转发 EventBus.emit；req: 前缀 → 请求-响应，否则 → 广播
-        return await self._bus.emit(event, job, timeout=timeout, ctx=self, **data)
+    async def emit(self, event: str, job: Job | None = None, **data: Any) -> Any:
+        # 模式由 events.EVENT_MODES 决定：serial（非 None 短路）/ parallel（并发观察）
+        return await self._bus.emit(event, job=job, ctx=self, **data)
 
 
 class AgentLoop:

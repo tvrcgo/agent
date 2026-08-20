@@ -65,7 +65,7 @@ class ToolGuardPlugin(Plugin):
                 continue
 
             response = await ctx.emit(
-                "req:request_confirm", job,
+                "confirm_request", job,
                 confirm_description=f"Tool '{tc.name}': {tc.arguments} (verdict: {verdict})",
             )
             approved = bool(response and response.get("decision") == "approve")
