@@ -85,7 +85,7 @@ def load_config(path: str | Path = "config.yml") -> Config:
     if not p.exists():
         config = Config()
     else:
-        raw = yaml.safe_load(p.read_text()) or {}
+        raw = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
         expanded = _expand_env_vars(raw)
         config = Config(**expanded)
 

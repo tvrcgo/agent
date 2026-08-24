@@ -36,7 +36,8 @@ class PluginRegistry:
                 name = next(iter(item))
                 config = item[name] or {}
 
-            module_path = f"agent.plugins.{name}"
+            # 名称含 "." 视为完整模块路径（场景目录），否则回退基座内置前缀
+            module_path = name if "." in name else f"agent.plugins.{name}"
             try:
                 module = importlib.import_module(module_path)
             except ImportError:

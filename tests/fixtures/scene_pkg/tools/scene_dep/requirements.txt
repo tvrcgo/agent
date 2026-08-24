@@ -1,0 +1,2 @@
+# 该文件存在但依赖缺失：测试 _check_deps 能从场景包目录定位并报错
+nonexistent-scene-dep==1.0.0

@@ -29,6 +29,7 @@ class SessionPlugin(Plugin):
 
     def __init__(self) -> None:
         self._base_path = Path("./data/sessions")
+        self._workspace_root = Path("./workspace")
         self._sessions: dict[str, _SessionState] = {}
         self._system_prompt: SystemMessage | None = None
         self._max_load_messages: int = 100
@@ -50,6 +51,8 @@ class SessionPlugin(Plugin):
         self._max_tokens = config.get('max_tokens', 65536)
         self._compress_threshold = config.get('compress_threshold', 0.9)
         self._compress_keep_recent = config.get('compress_keep_recent', 10)
+        self._base_path = Path(config.get('session_root', './data/sessions'))
+        self._workspace_root = Path(config.get('workspace_root', './workspace'))
         self._base_path.mkdir(parents=True, exist_ok=True)
 
         prompt_path = Path(config.get('system_prompt_path', 'agent/AGENTS.md'))
@@ -72,7 +75,7 @@ class SessionPlugin(Plugin):
         if not content:
             return
 
-        workspace = Path("./workspace") / self._safe_name(job.id)
+        workspace = self._workspace_root / self._safe_name(job.id)
         workspace.mkdir(parents=True, exist_ok=True)
         job.data["work_dir"] = str(workspace.absolute())
 

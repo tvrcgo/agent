@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib
+import importlib.util
 import importlib.metadata as _md
 import logging
 import re
@@ -141,8 +142,6 @@ class ToolRegistry:
         self._tools: dict[str, Tool] = {}
 
     def load_modules(self, tools: list[str | dict[str, Any]]) -> None:
-        tools_dir = Path(__file__).parent.parent / "tools"
-
         for item in tools:
             if isinstance(item, str):
                 name, config = item, {}
@@ -150,9 +149,11 @@ class ToolRegistry:
                 name = next(iter(item))
                 config = item[name] or {}
 
-            self._check_deps(name, tools_dir)
+            # 名称含 "." 视为完整模块路径（场景目录工具），否则回退基座内置前缀
+            module_path = name if "." in name else f"agent.tools.{name}"
 
-            module_path = f"agent.tools.{name}"
+            self._check_deps(name, module_path)
+
             try:
                 module = importlib.import_module(module_path)
             except ImportError:
@@ -232,10 +233,19 @@ class ToolRegistry:
         await self._ctx.emit("tool_error", job=job, tool_call=tool_call, error=reason)
 
     @staticmethod
-    def _check_deps(name: str, tools_dir: Path) -> None:
-        req_file = tools_dir / name / "requirements.txt"
+    def _check_deps(name: str, module_path: str) -> None:
+        # 依赖只检查不安装：安装发生在镜像构建时（与基座一致），缺失即启动报错。
+        # 无 requirements.txt 视为无额外依赖，静默跳过。
+        # 用 find_spec 定位模块目录（不 import 模块本身）。
         try:
-            lines = req_file.read_text().splitlines()
+            spec = importlib.util.find_spec(module_path)
+        except (ImportError, ValueError):
+            return
+        if spec is None or spec.origin is None:
+            return
+        req_file = Path(spec.origin).parent / "requirements.txt"
+        try:
+            lines = req_file.read_text(encoding="utf-8").splitlines()
         except FileNotFoundError:
             return
 
@@ -249,8 +259,8 @@ class ToolRegistry:
             pkg = m.group(1)
             try:
                 _md.version(pkg)
-            except _md.PackageNotFoundException:
+            except _md.PackageNotFoundError:
                 raise ToolRegistry.DependencyError(
                     f"Tool '{name}' requires '{line}' but it is not installed. "
-                    f"Run 'pip install -r agent/tools/{name}/requirements.txt' or rebuild the image."
+                    f"Rebuild the image (requirements.txt is installed at build time)."
                 )
