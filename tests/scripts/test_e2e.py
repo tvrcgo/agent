@@ -454,7 +454,9 @@ async def test_e2e_cancel() -> None:
     session._base_path = Path(tempfile.mkdtemp(prefix="e2e-cancel-"))
 
     loop.ctx.on("msg_input", loop._on_input)
-    loop.ctx.on("cmd_cancel", loop._on_command_cancel)
+    from agent.plugins.cancel import CancelPlugin
+    cancel = CancelPlugin()
+    cancel.load(loop.ctx, {})
     await loop.ctx.emit("agent_start")
 
     spy = OutputSpy(loop)
@@ -471,6 +473,7 @@ async def test_e2e_cancel() -> None:
 
     session.unload()
     message.unload()
+    cancel.unload()
 
 
 async def test_e2e_truncated() -> None:
@@ -652,7 +655,9 @@ async def test_e2e_cancel_orphan_cleanup() -> None:
     """
     loop = _make_loop([])
     loop._tools.register(EchoTool())
-    loop.ctx.on("cmd_cancel", loop._on_command_cancel)
+    from agent.plugins.cancel import CancelPlugin
+    cancel = CancelPlugin()
+    cancel.load(loop.ctx, {})
 
     from agent.plugins.message import MessagePlugin
     message = MessagePlugin()
@@ -703,6 +708,7 @@ async def test_e2e_cancel_orphan_cleanup() -> None:
 
     session.unload()
     message.unload()
+    cancel.unload()
 
 
 async def main() -> None:

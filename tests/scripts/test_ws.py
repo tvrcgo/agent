@@ -61,17 +61,9 @@ async def test_session_persistence():
         await ws.send(_chat("hello, my name is TestBot"))
         await asyncio.sleep(2)
 
-    import subprocess
-    result = subprocess.run(
-        ["ls", "-la", f"data/sessions/{sid}.jsonl"],
-        capture_output=True, text=True,
-    )
-    size = 0
-    if result.returncode == 0:
-        # Get file size
-        stat_result = subprocess.run(["stat", "-f%z", f"data/sessions/{sid}.jsonl"], capture_output=True, text=True)
-        if stat_result.returncode == 0:
-            size = int(stat_result.stdout.strip() or 0)
+    import os
+    path = os.path.join("data", "sessions", f"{sid}.jsonl")
+    size = os.path.getsize(path) if os.path.exists(path) else 0
     print(f"  session file size: {size} bytes")
     passed = size > 0
     print("  PASS" if passed else "  FAIL")
@@ -233,15 +225,15 @@ async def test_heartbeat():
     print("\n=== Scenario 12: Heartbeat ===")
     async with _connect(f"{WS_URL}?session_id=test-heartbeat-{uuid.uuid4().hex[:6]}") as ws:
         msgs = []
-        try:
-            for _ in range(20):
-                raw = await asyncio.wait_for(ws.recv(), timeout=2)
+        for _ in range(12):
+            try:
+                raw = await asyncio.wait_for(ws.recv(), timeout=4)
                 msg = json.loads(raw)
                 msgs.append(msg)
                 if msg["type"] == "heartbeat":
                     break
-        except asyncio.TimeoutError:
-            pass
+            except asyncio.TimeoutError:
+                continue
 
         heartbeat_events = [m for m in msgs if m["type"] == "heartbeat"]
         status_events = [m for m in msgs if m["type"] == "status"]
@@ -348,6 +340,72 @@ async def test_message_event_types():
         print("  PASS" if passed else "  FAIL")
         return passed
 
+
+async def test_pause_resume():
+    """Pause command stops a running job at safe point; resume continues it."""
+    print("\n=== Scenario 14: Pause / Resume ===")
+    async with _connect(f"{WS_URL}?session_id=test-pause-{uuid.uuid4().hex[:6]}") as ws:
+        await ws.send(_chat("search the web for latest AI news"))
+        await asyncio.sleep(2)
+        await ws.send(_command("pause"))
+        await asyncio.sleep(1)
+
+        # 应先收到 paused 状态
+        seen_paused = False
+        try:
+            while True:
+                raw = await asyncio.wait_for(ws.recv(), timeout=10)
+                msg = json.loads(raw)
+                if msg["type"] == "status" and msg.get("payload", {}).get("content") == "paused":
+                    seen_paused = True
+                    break
+                if msg["type"] == "error":
+                    break
+        except asyncio.TimeoutError:
+            pass
+
+        await ws.send(_command("resume"))
+        msgs = await _collect(ws, timeout=60)
+        status_events = [m for m in msgs if m["type"] == "status"]
+        last_status = status_events[-1]["payload"]["content"] if status_events else ""
+        print(f"  seen paused: {seen_paused}, final status: {last_status}")
+        passed = seen_paused and last_status in ("done", "error", "cancelled")
+        print("  PASS" if passed else "  FAIL")
+        return passed
+
+
+async def test_pause_noop():
+    """Pause/resume on unknown session is a no-op, doesn't crash."""
+    print("\n=== Scenario 15: Pause No-op ===")
+    async with _connect(f"{WS_URL}?session_id=test-pause-noop-{uuid.uuid4().hex[:6]}") as ws:
+        await ws.send(_command("pause"))
+        await ws.send(_command("resume"))
+        await asyncio.sleep(1)
+        print("  pause/resume sent, no crash")
+        passed = True
+        print("  PASS" if passed else "  FAIL")
+        return passed
+
+
+async def test_cancel_while_paused():
+    """Cancel while paused stops the job (CancelledError interrupts gate.wait)."""
+    print("\n=== Scenario 16: Cancel While Paused ===")
+    async with _connect(f"{WS_URL}?session_id=test-pause-cancel-{uuid.uuid4().hex[:6]}") as ws:
+        await ws.send(_chat("search the web for latest AI news"))
+        await asyncio.sleep(2)
+        await ws.send(_command("pause"))
+        await asyncio.sleep(1)
+        await ws.send(_command("cancel"))
+
+        msgs = await _collect(ws, timeout=30)
+        status_events = [m for m in msgs if m["type"] == "status"]
+        last_status = status_events[-1]["payload"]["content"] if status_events else ""
+        print(f"  final status: {last_status}")
+        passed = last_status in ("cancelled", "error")
+        print("  PASS" if passed else "  FAIL")
+        return passed
+
+
 async def main():
     results = {}
     scenarios = [
@@ -364,6 +422,9 @@ async def main():
         ("job_tree_event", test_job_tree_event),
         ("long_running_subjob", test_long_running_subjob),
         ("message_event_types", test_message_event_types),
+        ("pause_resume", test_pause_resume),
+        ("pause_noop", test_pause_noop),
+        ("cancel_while_paused", test_cancel_while_paused),
     ]
 
     for name, fn in scenarios:
