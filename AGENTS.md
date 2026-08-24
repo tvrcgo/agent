@@ -21,6 +21,8 @@
 - `subjob.py`：子任务递归（独立 session_id 经 `msg_input` 建独立 job，结果经 `job_end` 回填）
 - `confirm.py`：通用确认通道（`confirm_request` serial 事件请求决策，内部推送确认到前端并注册一次性 `cmd_confirm` 监听等决策，超时按 deny 处理）
 - `tool_guard.py`：工具执行守卫（审查→确认→阻断，全在插件内闭环）
+- `pause.py`：job 暂停/恢复（复用 `turn_start`/`tools_start` 挂载点阻塞，门闩为插件私有 `_gates[job.id]`，`cmd_pause`/`cmd_resume` 支持 `session_id` 路由；与守卫链顺序由 plugins 配置顺序决定）
+- `cancel.py`：job 取消指令触发（`cmd_cancel` 经 `ctx._self._jobs` 定位目标 task → `Task.cancel()`，支持 `session_id` 路由；`CancelledError` 有序收尾仍在 core）
 - `skill.py`：SKILL.md 指令模板加载，`turn_start` 追加提示段
 - `logging.py`：领域事件日志
 - `mcp.py`：从 agent-mcp 服务（`services/mcp/`）同步 MCP 工具，命名 `mcp_{server}_{tool}`

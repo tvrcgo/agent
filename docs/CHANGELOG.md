@@ -1,6 +1,28 @@
 # CHANGELOG
 > 新内容放前面，同一天内容合并；版本号和PR ID、Issue ID没有可省略
 
+## [unreleased] - 2026-08-24
+
+### 核心摘要
+Job 控制指令下沉为独立插件并新增暂停/恢复能力：`pause`（暂停/恢复）与 `cancel`（取消）两个插件承载 `cmd_*` 指令，core 只保留执行机制（`CancelledError` 有序收尾），不新增事件、不改 `EVENT_MODES`。pause 复用 `turn_start`/`tools_start` 作为挂载点，与 tool_guard 守卫链的顺序由 plugins 配置顺序决定；门闩为插件私有 `_gates[job.id]`（不写 job.data，无覆盖风险），生命周期与 job 同步。新增真实 E2E 验证（本地起 agent + DeepSeek 驱动 WS 链路），并修复 `test_ws.py` 两个存量测试 bug（heartbeat 超时逻辑、persistence 平台依赖）。
+
+### 变更
+- 新增：`plugins/pause.py` job 暂停/恢复——复用 `turn_start`/`tools_start` 挂载点阻塞（软暂停：在飞 LLM/工具自然完成后在下一安全点生效），`cmd_pause`/`cmd_resume` 支持 `session_id` 路由（可暂停子 job），状态经 `msg_output` 直发 `paused`/`running`
+- 新增：`plugins/cancel.py` job 取消指令触发——`cmd_cancel` 经 `ctx._self._jobs` 定位目标 task → `Task.cancel()`，支持 `session_id` 路由；`CancelledError` 有序收尾保留在 core
+- 变更：`core/loop.py` 移除 `_on_command_cancel` 与注册，`start()` 仅注册 `msg_input`（`cmd_*` 全由插件承载）
+- 变更：`config.yml` plugins 追加 `- pause`、`- cancel`（pause 在 tool_guard 前：先暂停后审查）
+- 变更：`plugins/subjob.py` 监听 `turn_start`/`tools_start` 刷新 job 树（暂停中的子 job 在 UI 显示 paused）
+- 测试：新增 `tests/scripts/test_pause.py` 7 用例（挂载点阻塞、serial 顺序双向、cancel 中断、job_end 清理、session_id 路由）、`tests/scripts/test_cancel.py` 3 用例（运行中取消、session_id 路由、未知 job no-op）
+- 测试：`tests/scripts/test_ws.py` 新增 pause_resume / pause_noop / cancel_while_paused 3 个真实 WS E2E 场景；修复两个存量 bug——heartbeat 场景超时逻辑（`try/except` 包住整个 for 导致首次 2s 超时即退出，改为每次迭代独立超时）、persistence 场景平台依赖（`ls`/`stat` → `os.path.getsize`）
+- 测试：真实 E2E 通过（本地 agent + DeepSeek：pause→resume→done、pause→cancel→cancelled、no-op；test_ws 16 场景、test_pause 7/7、test_cancel 3/3、test_e2e 11/11、test_subjob 6/6、test_loop_followup 7/7、test_scene_registry 9/9）
+- 文档：`AGENTS.md` plugin 清单补充 pause.py/cancel.py；`docs/job-pause-resume.md` 机制设计
+
+### 上下文
+- 遵循「功能扩展走事件+插件、core 只承载执行机制」：`cmd_*` 指令全部下沉插件，core `start()` 仅注册 `msg_input`
+- pause 复用现有事件（不新增事件、不改 `EVENT_MODES`）；`tools_start` 为 serial，pause 与 tool_guard 同挂该点，顺序由 plugins 配置顺序决定，pause handler 始终返回 None 不短路守卫链
+- 门闩语义：`asyncio.Event` 初始 set（放行），`cmd_pause` → clear（阻塞），`cmd_resume` → set；`Event.set` 粘性（set 后 wait 立即返回）故暂停=clear
+- 影响范围：`core/loop.py`、`plugins/pause.py`、`plugins/cancel.py`、`plugins/subjob.py`、`config.yml`、`tests/`、`docs/`、`AGENTS.md`
+
 ## [unreleased] - 2026-08-21
 
 ### 核心摘要

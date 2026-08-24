@@ -16,10 +16,12 @@
 - [test_ws.py](scripts/test_ws.py) — WebSocket 测试
 - [test_loop_followup.py](scripts/test_loop_followup.py) — follow-up 多轮输出回归测试
 - [test_scene_registry.py](scripts/test_scene_registry.py) — 基座场景化单元测试（场景包工具/插件加载、内置回退、依赖定位、session 路径配置化）
+- [test_pause.py](scripts/test_pause.py) — 暂停/恢复单元测试（挂载点阻塞、serial 顺序、cancel 中断、job_end 清理、session_id 路由）
+- [test_cancel.py](scripts/test_cancel.py) — 取消插件单元测试（cmd_cancel → cancelled、session_id 路由、未知 job no-op）
 - [test_e2e.py](scripts/test_e2e.py) — 端到端集成测试（fake LLM，无网络依赖）
   - msg_input → LLM → 工具/subjob 递归 → msg_output 基础链路
   - 流式（llm_chunk → stream 消息）
   - tool_guard + confirm（approve/deny 决策回传）
-  - 取消（cmd_cancel → cancelled）、截断（finish_reason=length）、max_iterations、LLM 异常
+  - 取消（cmd_cancel → cancelled，经 CancelPlugin）、截断（finish_reason=length）、max_iterations、LLM 异常
   - max_concurrent 排队、follow-up steering 多轮
   - 取消后孤儿 tool_calls 清理（回归：DeepSeek 400）
