@@ -15,6 +15,7 @@
 - [test_subjob.py](scripts/test_subjob.py) — 子任务测试
 - [test_ws.py](scripts/test_ws.py) — WebSocket 测试
 - [test_loop_followup.py](scripts/test_loop_followup.py) — follow-up 多轮输出回归测试
+- [test_scene_registry.py](scripts/test_scene_registry.py) — 基座场景化单元测试（场景包工具/插件加载、内置回退、依赖定位、session 路径配置化）
 - [test_e2e.py](scripts/test_e2e.py) — 端到端集成测试（fake LLM，无网络依赖）
   - msg_input → LLM → 工具/subjob 递归 → msg_output 基础链路
   - 流式（llm_chunk → stream 消息）

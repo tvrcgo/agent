@@ -27,6 +27,17 @@
 
 **tools（`agent/tools/`）**：内置工具，每目录一个 Tool 子类；**services（`services/`）**：外部服务独立部署，通过共享 Docker 网络通信，agent 不强依赖。
 
+## 场景扩展（基座 + 场景目录）
+
+本仓库是**基座**：core 执行机制 + 内置插件/工具，每场景一个容器 `FROM agent-base`。垂直场景是**独立目录**（自己的 plugins/tools/AGENTS.md/skills），COPY 到容器 `/app` 下与基座分层存放（不侵入 `agent/` 包），无需打包。场景间不共享工具。
+
+- 加载机制：无特殊开关，按配置项显式声明——场景 tool/plugin 写进 `tools`/`plugins` 列表（含 `.` 的完整模块路径，场景目录名即包名），资产写普通文件路径（`system_prompt_path`、skill `dirs`）
+- 保留名：场景目录名禁止 `agent`（会覆盖基座包）
+- 注册规则：`config.yml` 的 `tools`/`plugins` 项名称**不含 `.`** 回退内置前缀（`agent.tools.{name}` / `agent.plugins.{name}`），**含 `.`** 视为完整模块路径直接 import
+- 工具第三方依赖：`requirements.txt` 放在工具模块目录（内置或场景均可），镜像构建时安装；`_check_deps` 按模块实际位置定位
+- session 插件路径可配置：`session_root`（默认 `./data/sessions`）、`workspace_root`（默认 `./workspace`，按 session id 建工作子目录）、`system_prompt_path`（默认 `agent/AGENTS.md`）
+- 场景扩展机制详见 `docs/scene-extension.md`
+
 ## 核心概念
 
 ### AgentContext
@@ -61,9 +72,9 @@ core 只提供执行机制，阻断实现交给 plugin：`execute_batch`（core�
 ## 约定
 
 - 配置：Pydantic 模型内置默认值，`config.yml` 覆盖
-- 会话存储：`./data/sessions/`，每会话一个 JSONL 文件
-- 默认系统提示词从 `agent/AGENTS.md` 读取
-- 测试资源清单见 `tests/README.md`
+- 会话存储：`./data/sessions/`，每会话一个 JSONL 文件（`session` 插件 `session_root` 可配）
+- 默认系统提示词从 `agent/AGENTS.md` 读取（`session` 插件 `system_prompt_path` 可配）
+- 测试资源清单见 `tests/README.md`；场景包测试 fixture 在 `tests/fixtures/scene_pkg/`
 - 一次性临时文件写入系统临时目录
 - tool 的依赖与项目依赖隔离
 

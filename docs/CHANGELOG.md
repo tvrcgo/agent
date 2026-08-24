@@ -1,6 +1,24 @@
 # CHANGELOG
 > 新内容放前面，同一天内容合并；版本号和PR ID、Issue ID没有可省略
 
+## [unreleased] - 2026-08-21
+
+### 核心摘要
+基座场景化：agent 作为**基座**支持垂直场景扩展，场景与基座**分层**。registry 模块路径解析兼容完整模块路径（名称含 `.` 直接 import，否则回退内置前缀，存量 config.yml 零改动）；场景 = 独立目录（plugins/tools/AGENTS.md/skills），COPY 到容器 `/app` 下即可运行，不侵入 `agent/` 包，每场景一个容器 `FROM agent-base`。场景能力按配置项显式声明（工具写 `tools` 列表、资产写文件路径），无全局开关。新增场景扩展说明文档。
+
+### 变更
+- 变更：`core/plugin.py` `PluginRegistry.load_modules` 名称含 `.` 按完整模块路径加载，否则回退 `agent.plugins.{name}`
+- 变更：`core/tool.py` `ToolRegistry.load_modules` 同上；`_check_deps` 按模块实际位置（内置目录 / 外部模块 `find_spec` 定位）找 requirements.txt，缺失依赖报错提示重建镜像（依赖只在镜像构建时安装，运行时不做安装）；requirements.txt 读取指定 UTF-8
+- 修复：`core/tool.py` 存量 bug——`importlib.metadata` 异常名写错（`PackageNotFoundException` → `PackageNotFoundError`），真实缺依赖时会抛 AttributeError 掩盖 DependencyError
+- 变更：`plugins/session.py` 路径配置化——`session_root`（默认 `./data/sessions`）、`workspace_root`（默认 `./workspace`，按 session id 建工作子目录）；config 读取指定 UTF-8
+- 新增：`docs/scene-extension.md` 场景扩展说明（机制介绍，无实际代码）
+- 测试：新增 `tests/scripts/test_scene_registry.py` 9 用例（场景工具/插件加载、内置回退、模块缺失跳过、场景依赖定位、session 路径配置化）+ `tests/fixtures/scene_pkg/` 场景 fixture；存量回归全绿（e2e 11/11、follow-up 7/7、subjob 6/6、protocol 3/3）
+
+### 上下文
+- 垂直场景形态：每场景独立容器运行；agent 提供基座按场景扩展；场景间不共享工具；场景是独立目录（不打包、与基座分层、不侵入 agent/ 包），场景能力经 config.yml 显式声明，基座包名不变走内部私有 index
+- `AgentLoop` 自包含（自有 EventBus/ToolRegistry/PluginRegistry），每容器一实例天然成立，`loop.py` 与 `EVENT_MODES` 契约零改动
+- 影响范围：`core/plugin.py`、`core/tool.py`、`plugins/session.py`、`docs/scene-extension.md`、`tests/`
+
 ## [unreleased] - 2026-08-20
 
 ### 核心摘要
