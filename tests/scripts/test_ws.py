@@ -342,7 +342,6 @@ async def test_message_event_types():
 
 
 async def test_pause_resume():
-    """Pause command stops a running job at safe point; resume continues it."""
     print("\n=== Scenario 14: Pause / Resume ===")
     async with _connect(f"{WS_URL}?session_id=test-pause-{uuid.uuid4().hex[:6]}") as ws:
         await ws.send(_chat("search the web for latest AI news"))
@@ -350,7 +349,6 @@ async def test_pause_resume():
         await ws.send(_command("pause"))
         await asyncio.sleep(1)
 
-        # 应先收到 paused 状态
         seen_paused = False
         try:
             while True:
@@ -375,7 +373,6 @@ async def test_pause_resume():
 
 
 async def test_pause_noop():
-    """Pause/resume on unknown session is a no-op, doesn't crash."""
     print("\n=== Scenario 15: Pause No-op ===")
     async with _connect(f"{WS_URL}?session_id=test-pause-noop-{uuid.uuid4().hex[:6]}") as ws:
         await ws.send(_command("pause"))
@@ -388,7 +385,6 @@ async def test_pause_noop():
 
 
 async def test_cancel_while_paused():
-    """Cancel while paused stops the job (CancelledError interrupts gate.wait)."""
     print("\n=== Scenario 16: Cancel While Paused ===")
     async with _connect(f"{WS_URL}?session_id=test-pause-cancel-{uuid.uuid4().hex[:6]}") as ws:
         await ws.send(_chat("search the web for latest AI news"))

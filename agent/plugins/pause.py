@@ -15,8 +15,6 @@ logger = logging.getLogger(__name__)
 
 
 class PausePlugin(Plugin):
-    """Job 暂停/恢复：复用 turn_start/tools_start 挂载点阻塞，门闩为插件私有 _gates[job.id]。"""
-
     name = "pause"
 
     def __init__(self) -> None:
@@ -37,7 +35,6 @@ class PausePlugin(Plugin):
 
     async def _on_job_start(self, ctx: AgentContext, evt: Event) -> None:
         if evt.job is not None:
-            # 门闩初始 set（放行）；clear = 暂停（阻塞）
             gate = asyncio.Event()
             gate.set()
             self._gates[evt.job.id] = gate
@@ -51,7 +48,6 @@ class PausePlugin(Plugin):
         if job is None:
             return None
         gate = self._gates.get(job.id)
-        # Event.set 粘性：set 后 wait 立即返回，clear 后 wait 阻塞
         if gate is None or gate.is_set():
             return None
 

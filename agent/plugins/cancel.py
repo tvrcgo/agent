@@ -13,8 +13,6 @@ logger = logging.getLogger(__name__)
 
 
 class CancelPlugin(Plugin):
-    """cmd_cancel 指令触发：经 ctx._self._jobs 定位目标 task → Task.cancel()。"""
-
     name = "cancel"
 
     def load(self, ctx: AgentContext, config: dict = {}) -> None:

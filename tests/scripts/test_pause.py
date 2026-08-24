@@ -1,15 +1,3 @@
-"""Pause / resume unit tests.
-
-直接挂 PausePlugin 于 AgentLoop，验证：
-- tools_start 挂载点阻塞（行动前暂停，工具不执行）与恢复
-- turn_start 挂载点阻塞（工具跑完后、下一轮前暂停）与恢复
-- tools_start serial 顺序（pause 与后续 handler 的先后由注册顺序决定）
-- job_end 门闩清理
-- 暂停中 cmd_cancel 中断路径
-- cmd_pause / cmd_resume 目标 session_id 路由
-
-不依赖真实 LLM / 网络，通过 fake model（带可控门闩）+ 动态注册工具驱动。
-"""
 from __future__ import annotations
 
 import asyncio
@@ -27,8 +15,6 @@ from agent.plugins.pause import PausePlugin
 
 
 class EchoTool(Tool):
-    """测试用工具：回显输入。"""
-
     name = "echo"
     description = "Echo the input text."
     parameters = {
@@ -42,8 +28,6 @@ class EchoTool(Tool):
 
 
 class SlowEcho(Tool):
-    """慢工具：执行期间给测试留出设置 pause 的窗口。"""
-
     name = "echo"
     description = "Echo the input text."
     parameters = {
@@ -58,8 +42,6 @@ class SlowEcho(Tool):
 
 
 class OutputSpy:
-    """监听 msg_output，收集 evt.data['output']。"""
-
     def __init__(self, loop: AgentLoop) -> None:
         self.outputs: list[OutputMessage] = []
         loop.ctx.on("msg_output", self._on_output)
@@ -77,11 +59,6 @@ class OutputSpy:
 
 
 class PausableFake:
-    """首轮 LLM 阻塞在 first_gate；放行后返回工具调用。
-
-    之后（含 tool result）返回最终文本。用于在"行动前"窗口内精确设置 pause。
-    """
-
     def __init__(self) -> None:
         self.first_gate = asyncio.Event()
         self.calls = 0
@@ -101,8 +78,6 @@ class PausableFake:
 
 
 class GateFake:
-    """首轮直接返回工具调用（不阻塞）；之后返回最终文本。"""
-
     def __init__(self) -> None:
         self.calls = 0
 
@@ -130,7 +105,6 @@ def _make_loop(tools: list, stream: bool = False) -> AgentLoop:
 
 
 def _install_base(loop: AgentLoop) -> None:
-    """注册 msg_input 处理 + CancelPlugin，模拟启动环境。"""
     loop.ctx.on("msg_input", loop._on_input)
     from agent.plugins.cancel import CancelPlugin
     cancel = CancelPlugin()
@@ -139,7 +113,6 @@ def _install_base(loop: AgentLoop) -> None:
 
 
 def _install_message(loop: AgentLoop):
-    """挂真实 MessagePlugin（负责 job_end → status 翻译）。"""
     from agent.plugins.message import MessagePlugin
     message = MessagePlugin()
     message.load(loop.ctx, {})
@@ -154,7 +127,6 @@ def _install_session(loop: AgentLoop, prefix: str) -> SessionPlugin:
 
 
 async def test_pause_at_tools_start() -> None:
-    """tools_start 前暂停：暂停期间工具不执行，resume 后继续并完成。"""
     loop = _make_loop([])
     loop._tools.register(EchoTool())
     fake = PausableFake()
@@ -171,14 +143,12 @@ async def test_pause_at_tools_start() -> None:
 
     await loop.ctx.emit("msg_input", input=InputMessage(content="do it", session_id="p-1"))
     await asyncio.sleep(0.3)
-    # 首轮 LLM 阻塞在 first_gate：job 运行中，且尚未暂停
     assert loop._is_running("p-1"), "job should still be running"
     assert "paused" not in spy.statuses(), "should not be paused yet (still in LLM)"
 
-    # 在"行动前"窗口设置 pause（LLM 尚未返回工具调用）
     await loop.ctx.emit("cmd_pause", job=Job(id="p-1", status="thinking"))
     await asyncio.sleep(0.1)
-    fake.first_gate.set()   # LLM 返回工具调用 → tools_start → pause 阻塞
+    fake.first_gate.set()
     await asyncio.sleep(0.3)
 
     assert "paused" in spy.statuses(), f"expected paused, got {spy.statuses()}"
@@ -196,7 +166,6 @@ async def test_pause_at_tools_start() -> None:
 
 
 async def test_pause_at_turn_start() -> None:
-    """工具跑完后、下一轮 turn_start 前暂停：resume 后继续到 done。"""
     loop = _make_loop([])
     loop._tools.register(SlowEcho())
     fake = GateFake()
@@ -213,9 +182,8 @@ async def test_pause_at_turn_start() -> None:
 
     await loop.ctx.emit("msg_input", input=InputMessage(content="do it", session_id="p-2"))
     await asyncio.sleep(0.2)
-    # 工具执行中设置 pause → 生效点在工具跑完后的下一轮 turn_start
     await loop.ctx.emit("cmd_pause", job=Job(id="p-2", status="acting"))
-    await asyncio.sleep(0.9)   # 等 SlowEcho 完成 → turn_end → 下一轮 turn_start 阻塞
+    await asyncio.sleep(0.9)
 
     assert "paused" in spy.statuses(), f"expected paused, got {spy.statuses()}"
     assert any(o.type == "tool_result" for o in spy.outputs), "tool should have completed before pause"
@@ -231,7 +199,6 @@ async def test_pause_at_turn_start() -> None:
 
 
 async def test_tools_start_serial_order_pause_first() -> None:
-    """pause 先注册：tools_start 时 pause 阻塞，后续 handler（守卫探针）被挡在其后。"""
     loop = _make_loop([])
     loop._tools.register(EchoTool())
     fake = PausableFake()
@@ -241,7 +208,6 @@ async def test_tools_start_serial_order_pause_first() -> None:
     session = _install_session(loop, "pause-order-")
     probe_ran: list[str] = []
 
-    # 注册顺序：pause 在前
     pause = PausePlugin()
     pause.load(loop.ctx, {})
 
@@ -277,7 +243,6 @@ async def test_tools_start_serial_order_pause_first() -> None:
 
 
 async def test_tools_start_serial_order_probe_first() -> None:
-    """后续 handler 先注册：tools_start 时其先执行，pause 后阻塞。"""
     loop = _make_loop([])
     loop._tools.register(EchoTool())
     fake = PausableFake()
@@ -287,7 +252,6 @@ async def test_tools_start_serial_order_probe_first() -> None:
     session = _install_session(loop, "pause-order2-")
     probe_ran: list[str] = []
 
-    # 注册顺序：探针在前，pause 在后
     async def _probe(ctx: AgentContext, evt: Event) -> None:
         probe_ran.append(evt.job.id if evt.job else "?")
 
@@ -322,7 +286,6 @@ async def test_tools_start_serial_order_probe_first() -> None:
 
 
 async def test_cancel_while_paused() -> None:
-    """暂停中 cmd_cancel → CancelledError 中断 gate.wait → job_end(cancelled)。"""
     loop = _make_loop([])
     loop._tools.register(EchoTool())
     fake = PausableFake()
@@ -358,7 +321,6 @@ async def test_cancel_while_paused() -> None:
 
 
 async def test_job_end_cleans_gate() -> None:
-    """job 结束后门闩被清理：同 session 再次 pause 为 no-op（不崩溃）。"""
     loop = _make_loop([])
     loop._tools.register(EchoTool())
     fake = GateFake()
@@ -378,7 +340,6 @@ async def test_job_end_cleans_gate() -> None:
 
     assert "p-6" not in pause._gates, "gate not cleaned up after job end"
 
-    # 结束后的 pause / resume 均为 no-op
     await loop.ctx.emit("cmd_pause", job=Job(id="p-6", status="done"))
     await loop.ctx.emit("cmd_resume", job=Job(id="p-6", status="done"))
     await asyncio.sleep(0.2)
@@ -389,7 +350,6 @@ async def test_job_end_cleans_gate() -> None:
 
 
 async def test_cmd_pause_session_id_routing() -> None:
-    """cmd_pause 带 session_id 可路由到指定 job（子 job 场景）。"""
     loop = _make_loop([])
     loop._tools.register(EchoTool())
     fake = PausableFake()
@@ -407,7 +367,6 @@ async def test_cmd_pause_session_id_routing() -> None:
     await asyncio.sleep(0.3)
     assert "p-7" in pause._gates, "gate not created"
 
-    # 用 session_id 定位（连接 job id 不同也能命中）
     await loop.ctx.emit("cmd_pause", job=Job(id="other", status="idle"), session_id="p-7")
     await asyncio.sleep(0.1)
     assert not pause._gates["p-7"].is_set(), "gate should be cleared (paused) via session_id"

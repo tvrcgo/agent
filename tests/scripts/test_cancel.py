@@ -1,13 +1,3 @@
-"""Cancel plugin unit tests.
-
-验证下沉后的 CancelPlugin：
-- cmd_cancel → 找到目标 task → Task.cancel() → job_end(reason=cancelled)
-- session_id 路由（可取消子 job，命令 job.id 可不同于目标）
-- 对未运行/不存在的 job：no-op（不崩溃）
-- 暂停中取消（与 PausePlugin 协同）已在 test_pause.py 覆盖
-
-不依赖真实 LLM / 网络，通过 fake model 驱动。
-"""
 from __future__ import annotations
 
 import asyncio
@@ -52,8 +42,6 @@ class OutputSpy:
 
 
 class SlowFake:
-    """慢模型：首轮阻塞，留出取消窗口。"""
-
     def __init__(self) -> None:
         self.calls = 0
 
@@ -76,7 +64,6 @@ def _make_loop(tools: list, stream: bool = False) -> AgentLoop:
 
 
 async def test_cancel_running_job() -> None:
-    """cmd_cancel → Task.cancel → job_end(reason=cancelled)。"""
     loop = _make_loop([])
     fake = SlowFake()
     loop._models.get = lambda scene: fake
@@ -112,7 +99,6 @@ async def test_cancel_running_job() -> None:
 
 
 async def test_cancel_session_id_routing() -> None:
-    """cmd_cancel 带 session_id 可取消指定 job（命令 job.id 不同也能命中）。"""
     loop = _make_loop([])
     fake = SlowFake()
     loop._models.get = lambda scene: fake
@@ -136,7 +122,6 @@ async def test_cancel_session_id_routing() -> None:
     await asyncio.sleep(0.4)
     assert loop._is_running("c-2"), "job should be running"
 
-    # 命令连接 job.id = other，但 session_id 指定 c-2
     await loop.ctx.emit("cmd_cancel", job=Job(id="other", status="idle"), session_id="c-2")
     await asyncio.sleep(0.8)
 
@@ -149,7 +134,6 @@ async def test_cancel_session_id_routing() -> None:
 
 
 async def test_cancel_noop_for_unknown() -> None:
-    """对未运行/不存在的 job 发 cancel：no-op，不崩溃。"""
     loop = _make_loop([])
     fake = SlowFake()
     loop._models.get = lambda scene: fake
@@ -168,11 +152,9 @@ async def test_cancel_noop_for_unknown() -> None:
 
     await loop.ctx.emit("agent_start")
 
-    # 从未启动的 session
     await loop.ctx.emit("cmd_cancel", job=Job(id="never-started", status="idle"))
     await loop.ctx.emit("cmd_cancel", job=Job(id="never-started", status="idle"), session_id="ghost")
     await asyncio.sleep(0.2)
-    # 不崩溃即可；确认没有错误输出
     assert not loop._is_running("never-started")
 
     session.unload()
