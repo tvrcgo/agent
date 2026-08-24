@@ -64,6 +64,8 @@ plugins:
   - logging
   - confirm:
       timeout: 120
+  - pause
+  - cancel
   - tool_guard:
       review_tools:
         - shell

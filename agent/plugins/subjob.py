@@ -30,6 +30,10 @@ class SubJobPlugin(Plugin):
         ctx.on("tools_end", self._send_jobs)
         ctx.on("job_end", self._send_jobs)
         ctx.on("job_end", self._on_job_end)
+        # 暂停挂载点：job 到达 turn_start / tools_start 时刷新 job 树，
+        # 使暂停中的子 job 在 UI 显示 status=paused
+        ctx.on("turn_start", self._send_jobs)
+        ctx.on("tools_start", self._send_jobs)
         self._max_sub_job_depth = config.get("max_depth", 2)
         logger.info("SubJobPlugin initialized, max_depth=%d", self._max_sub_job_depth)
 

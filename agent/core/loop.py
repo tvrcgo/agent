@@ -254,19 +254,10 @@ class AgentLoop:
                 logger.info("Starting queued job %s", next_job.id)
                 asyncio.create_task(self._handle_chat(next_job))
 
-    async def _on_command_cancel(self, ctx: AgentContext, evt: Event) -> None:
-        job = evt.job
-        if job is None:
-            return
-        target = self._jobs.get(job.id)
-        if target is not None and target._task is not None:
-            target._task.cancel()
-
     async def start(self) -> None:
         ctx = self.ctx
 
         ctx.on("msg_input", self._on_input)
-        ctx.on("cmd_cancel", self._on_command_cancel)
 
         if self._config.tools:
             self._tools.load_modules(self._config.tools)
