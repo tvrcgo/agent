@@ -13,15 +13,7 @@ logger = logging.getLogger(__name__)
 
 
 class CancelPlugin(Plugin):
-    """Job 取消指令触发（独立插件，不修改 core）。
-
-    core 仍保留 `CancelledError` 的有序收尾机制（`_run_loop` 捕获 → job_end），
-    但"cmd_cancel 指令 → 找到目标 task 并取消"的触发逻辑下沉到这里。
-
-    - 经 `ctx._self._jobs` 定位目标 job（与 subjob 插件访问 ctx._self 同一先例）。
-    - 支持 `session_id` 指定目标（默认取命令所在 job.id），可取消子 job。
-    - 与 `cmd_pause`/`cmd_resume` 正交：暂停中取消走 `CancelledError` 中断 gate.wait。
-    """
+    """cmd_cancel 指令触发：经 ctx._self._jobs 定位目标 task → Task.cancel()。"""
 
     name = "cancel"
 
