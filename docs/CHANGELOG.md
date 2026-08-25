@@ -16,7 +16,7 @@
 - 变更：`config.yml` plugins 追加 `- cmd_pause`、`- cmd_cancel`、`- cmd_reset`
 - 变更：`playground/index.html` 输入框 placeholder 补充 `/reset`
 - 测试：新增 `tests/scripts/test_reset.py` 6 用例（ctx.register/invoke 机制 + 仅显式方法 + KeyError + 重复注册 + 默认成员隔离、历史清空 + 重置后全新上下文、在飞 job 取消、session_id 路由、未知会话 no-op + 幂等、未加载 session 插件时 reset 不崩），6/6 通过；pause/cancel 插件重命名后 test_pause/test_cancel/test_e2e 同步更新；存量回归全绿（cancel 3/3、pause 7/7、e2e 11/11、subjob 6/6、followup 7/7、scene_registry 9/9）
-- 文档：`AGENTS.md` 补充 ctx 插件方法注册机制（AgentContext 段 + 架构规范 + plugin 清单）；`tests/README.md` 补充 test_reset.py
+- 文档：`AGENTS.md` 补充 ctx 插件方法注册机制（AgentContext 段 + 架构规范 + plugin 清单）；`tests/README.md` 补充 test_reset.py；`README.md` 特性补充插件双扩展机制
 
 ### 上下文
 - 机制：插件间调用从「经 `ctx._self` 私有对象操作实例」收敛为「`ctx.register(name, fn)` → `ctx.invoke(name, **args)`」gRPC 风格；注册只挂显式方法、全部收进 `_apis`，不承载运行时状态（状态仍走事件/`job.data`）

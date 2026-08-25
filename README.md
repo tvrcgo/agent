@@ -7,7 +7,7 @@
 
 - 多会话并行，多层子任务
 - 上下文自动压缩，保留近期完整 loop
-- 插件系统：生命周期钩子 + 命令钩子，功能扩展不修改核心代码
+- 插件系统：基于事件（生命周期钩子 + 命令钩子，经事件总线 `ctx.on`/`ctx.emit`）与基于方法注册（`ctx.register`/`ctx.invoke` gRPC 风格）两种扩展机制，功能扩展不修改核心代码、插件间不直接访问私有状态
 - 技能系统：SKILL.md 指令模板，从 `agent/skills/` 和 `skills/` 加载，注入系统提示词
 - MCP 支持：通过 agent-mcp 服务对接 Model Context Protocol
 
@@ -64,6 +64,7 @@ plugins:
   - websocket:
       host: 0.0.0.0
       port: 8765
+  - message
   - session:
       max_load_messages: 100
       max_tokens: 128000
@@ -71,6 +72,9 @@ plugins:
       system_prompt_path: agent/AGENTS.md
   - subjob:
       max_depth: 2
+  - cmd_pause
+  - cmd_cancel
+  - cmd_reset
   - logging
   - mcp:
       base_url: http://agent-mcp:8001
