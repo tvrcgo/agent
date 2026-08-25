@@ -6,10 +6,12 @@
 ## 主要特性
 
 - 多会话并行，多层子任务
-- 上下文自动压缩，保留近期完整 loop
-- 插件系统：基于事件（生命周期钩子 + 命令钩子，经事件总线 `ctx.on`/`ctx.emit`）与基于方法注册（`ctx.register`/`ctx.invoke` gRPC 风格）两种扩展机制，功能扩展不修改核心代码、插件间不直接访问私有状态
-- 技能系统：SKILL.md 指令模板，从 `agent/skills/` 和 `skills/` 加载，注入系统提示词
-- MCP 支持：通过 agent-mcp 服务对接 Model Context Protocol
+- 上下文自动压缩与会话持久化
+- 插件系统：事件驱动与方法注册两种扩展机制
+- 工具系统：内置工具 + MCP 工具同步，高风险工具审查确认阻断
+- 技能系统：SKILL.md 指令模板
+- 会话控制：暂停/恢复、取消、重置
+- 场景扩展：基座 + 垂直场景独立部署
 
 ## 部署
 
@@ -18,7 +20,7 @@ uv sync
 uv run python -m agent
 ```
 
-Agent 监听 `ws://localhost:8765`。
+Agent 监听 `ws://localhost:8765`（WebSocket 协议，流式输出 + 命令控制）。
 
 ### Docker
 
@@ -56,6 +58,10 @@ agent:
   max_iterations: 100
 
 tools:
+  - read_file
+  - write_file
+  - edit_file
+  - shell
   - subjob
   - websearch:
       search_url: http://searxng:8080
@@ -77,7 +83,7 @@ plugins:
   - cmd_reset
   - logging
   - mcp:
-      base_url: http://agent-mcp:8001
+      base_url: http://mcp:8001
 ```
 
 ## 外部服务
