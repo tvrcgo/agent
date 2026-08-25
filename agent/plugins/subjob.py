@@ -23,9 +23,11 @@ class SubJobPlugin(Plugin):
         self._pending: dict[str, asyncio.Future[str]] = {}
         self._depth: dict[str, int] = {}
         self._parent: dict[str, str] = {}
+        self._jobs: dict[str, Job] = {}
 
     def load(self, ctx: AgentContext, config: dict = {}) -> None:
         ctx.on("agent_start", self._on_agent_start)
+        ctx.on("job_start", self._on_job_start)
         ctx.on("llm_end", self._send_jobs)
         ctx.on("tools_end", self._send_jobs)
         ctx.on("job_end", self._send_jobs)
@@ -36,13 +38,19 @@ class SubJobPlugin(Plugin):
         logger.info("SubJobPlugin initialized, max_depth=%d", self._max_sub_job_depth)
 
     async def _on_agent_start(self, ctx: AgentContext, evt: Event) -> None:
-        ctx.subjob = self._create_subjob
+        ctx.register("subjob", self._create_subjob)
+
+    async def _on_job_start(self, ctx: AgentContext, evt: Event) -> None:
+        if evt.job is not None:
+            self._jobs[evt.job.id] = evt.job
 
     async def _send_jobs(self, ctx: AgentContext, evt: Event) -> None:
         job = evt.job
-        if job is None or ctx._self is None:
+        if job is None:
             return
         root_session = self._root_session(job.id)
+        jobs = {j.id: j for j in self._jobs.values()}
+        jobs[job.id] = job
         jobs_data = [
             {
                 "id": j.id,
@@ -51,7 +59,7 @@ class SubJobPlugin(Plugin):
                 "status": j.status,
                 "content": j.input.content if j.input else "",
             }
-            for j in ctx._self._jobs.values()
+            for j in jobs.values()
             if self._root_session(j.id) == root_session
         ]
         await ctx.emit(
@@ -73,6 +81,7 @@ class SubJobPlugin(Plugin):
         if job is None:
             return
         key = job.id
+        self._jobs.pop(key, None)
         future = self._pending.pop(key, None)
         if future and not future.done():
             future.set_result(job.turn.content if job.turn else "")

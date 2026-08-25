@@ -46,6 +46,7 @@ class SessionPlugin(Plugin):
         ctx.on("tool_end", self._on_tool_end)
         ctx.on("tool_error", self._on_tool_error)
         ctx.on("cmd_compress", self._on_compress)
+        ctx.register("reset_session", self.reset)
 
         self._max_load_messages = config.get('max_load_messages', 100)
         self._max_tokens = config.get('max_tokens', 65536)
@@ -195,6 +196,16 @@ class SessionPlugin(Plugin):
             return
         state = self._get_or_load(job.id)
         await self._compress(ctx, state, job)
+
+    def reset(self, session_id: str) -> None:
+        self._sessions.pop(session_id, None)
+        path = self._session_file(session_id)
+        try:
+            if path.exists():
+                path.unlink()
+            logger.info("Session %s reset: history cleared", session_id)
+        except Exception:
+            logger.warning("Failed to remove session file %s", path, exc_info=True)
 
     def _get_or_load(self, job_id: str) -> _SessionState:
         if job_id not in self._sessions:

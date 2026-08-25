@@ -16,13 +16,14 @@
 **plugin（`agent/plugins/`）**——业务扩展，通过 `ctx.on`/`ctx.emit` 经事件总线交流，插件间不相互依赖：
 
 - `message.py`：领域事件 → `OutputMessage` → `msg_output`（输出翻译唯一中枢）
-- `session.py`：会话数据（存取、压缩、LLM 消息组装），不发 `msg_output`
+- `session.py`：会话数据（存取、压缩、LLM 消息组装），不发 `msg_output`；注册 `reset_session`（`ctx.register("reset_session", self.reset)`，经 `ctx.invoke("reset_session", ...)` 调用）
 - `websocket.py` / `queue.py`：外部协议解析/序列化（信任边界），发 `msg_input`、消费 `msg_output`
-- `subjob.py`：子任务递归（独立 session_id 经 `msg_input` 建独立 job，结果经 `job_end` 回填）
+- `subjob.py`：子任务递归（独立 session_id 经 `msg_input` 建独立 job，结果经 `job_end` 回填）；注册 `ctx.subjob` 供 subjob 工具经 `ctx.invoke` 调用；job 树由插件自身经 `job_start`/`job_end` 维护（不访问 loop 私有 `_jobs`）
 - `confirm.py`：通用确认通道（`confirm_request` serial 事件请求决策，内部推送确认到前端并注册一次性 `cmd_confirm` 监听等决策，超时按 deny 处理）
 - `tool_guard.py`：工具执行守卫（审查→确认→阻断，全在插件内闭环）
-- `pause.py`：job 暂停/恢复（复用 `turn_start`/`tools_start` 挂载点阻塞，门闩为插件私有 `_gates[job.id]`，`cmd_pause`/`cmd_resume` 支持 `session_id` 路由；与守卫链顺序由 plugins 配置顺序决定）
-- `cancel.py`：job 取消指令触发（`cmd_cancel` 经 `ctx._self._jobs` 定位目标 task → `Task.cancel()`，支持 `session_id` 路由；`CancelledError` 有序收尾仍在 core）
+- `cmd_pause.py`：job 暂停/恢复（复用 `turn_start`/`tools_start` 挂载点阻塞，门闩为插件私有 `_gates[job.id]`，`cmd_pause`/`cmd_resume` 支持 `session_id` 路由；与守卫链顺序由 plugins 配置顺序决定）
+- `cmd_cancel.py`：job 取消指令触发（`cmd_cancel` 经 `ctx.job(id)` 定位目标 job → `Task.cancel()`，支持 `session_id` 路由）；注册 `cancel_job` API（取消 + 等有序收尾，供其他插件调用）；`CancelledError` 有序收尾仍在 core
+- `cmd_reset.py`：`/reset` 会话重置（与 pause/cancel 同范式：`cmd_reset` 直接处理——经 `ctx.invoke("cancel_job", ...)` 取消该会话在飞 job 并等其有序收尾（排队消息随 job 收尾清理）、`ctx.invoke("reset_session", ...)` 清空该会话历史并回执，支持 `session_id` 路由）
 - `skill.py`：SKILL.md 指令模板加载，`turn_start` 追加提示段
 - `logging.py`：领域事件日志
 - `mcp.py`：从 agent-mcp 服务（`services/mcp/`）同步 MCP 工具，命名 `mcp_{server}_{tool}`
@@ -43,7 +44,7 @@
 ## 核心概念
 
 ### AgentContext
-AgentLoop 的能力门面，贯穿 session/job 生命周期：`ctx.models`/`ctx.tools`/`ctx.config` 访问组件，`ctx.on`/`ctx.off`/`ctx.emit` 订阅发布事件。事件用 `job` 参数定位具体 job（多 job 并发下 ctx 不持有 job）；per-job 静态数据与执行缓存写 `job.data`，运行时数据一律随事件传递。
+AgentLoop 的能力门面，贯穿 session/job 生命周期：`ctx.models`/`ctx.tools`/`ctx.config` 访问组件，`ctx.on`/`ctx.off`/`ctx.emit` 订阅发布事件，`ctx.register(name, fn)` 注册插件对外方法（如 `ctx.register("reset_session", self.reset)`，重复注册抛 `ValueError`）、`ctx.invoke(name, **args)` gRPC 风格跨插件调用（均收进 `ctx._apis`）；`ctx.job(job_id)` 内置按 job id 获取 job（不走注册机制；job.id 由输入赋值，与会话 id 不默认一致）；领域操作（如 `cancel_job`）由对应插件注册。事件用 `job` 参数定位具体 job（多 job 并发下 ctx 不持有 job）；per-job 静态数据与执行缓存写 `job.data`，运行时数据一律随事件传递。
 
 ### 请求-响应原语
 事件的分发模式由 `agent/core/events.py` 的 `EVENT_MODES` 登记表决定（`parallel` 并发观察 / `serial` 顺序执行、首个非 None 短路并作为 emit 返回值）。未登记的事件按 `parallel` 分发并打 warning 日志。模式是事件契约的一部分：新事件应登记；监听方可从 `evt.mode` 读取当前模式。
@@ -84,7 +85,7 @@ core 只提供执行机制，阻断实现交给 plugin：`execute_batch`（core�
 
 - 按架构分层，模块只能向下或同级引用（core 不能引用 plugins）
 - **`loop.py` 是核心流程，不能随便修改**；功能扩展一律事件+插件，事件不够可新增，事件名要符合 loop 流程语义
-- plugin 之间不能相互依赖，通过事件总线交流
-- 组件间共享状态一律走事件（`Event.data` 或 `job.data`），不使用 `ctx.data` 动态属性
-- 插件 `load(ctx, config)` 时用 `ctx.on(name, handler)` 注册，`unload` 释放自身资源
+- plugin 之间不能相互依赖（不 import 对方模块）；对外能力经 `ctx.register(name, fn)` 注册进 `ctx._apis`（如 `ctx.register("reset_session", self.reset)`，重复注册抛 `ValueError`），经 `ctx.invoke(name, **args)` gRPC 风格调用，**禁止经 `ctx._self` 私有对象访问/操作其他插件实例**；注册不触碰 ctx 本体，默认成员（property/方法）天然不可被覆盖
+- 组件间共享状态一律走事件（`Event.data` 或 `job.data`），不使用 `ctx.data` 动态属性；`ctx.register` 仅用于插件对外方法注册，不承载运行时状态
+- 插件 `load(ctx, config)` 时用 `ctx.on(name, handler)` 注册事件、`ctx.register(name, fn)` 注册对外方法，`unload` 释放自身资源
 - handler 签名统一 `async def handler(ctx, evt: Event)`（不用的参数命名 `_`）

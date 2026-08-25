@@ -10,7 +10,7 @@ from agent.core.loop import AgentContext, AgentLoop, Job
 from agent.core.events import Event
 from agent.core.model import ModelResponse, ToolCall
 from agent.core.tool import Tool
-from agent.plugins.cancel import CancelPlugin
+from agent.plugins.cmd_cancel import CmdCancelPlugin
 from agent.plugins.session import SessionPlugin
 
 
@@ -69,8 +69,9 @@ async def test_cancel_running_job() -> None:
     loop._models.get = lambda scene: fake
 
     loop.ctx.on("msg_input", loop._on_input)
-    cancel = CancelPlugin()
+    cancel = CmdCancelPlugin()
     cancel.load(loop.ctx, {})
+    assert "cancel_job" in loop.ctx._apis and callable(loop.ctx.job)
 
     from agent.plugins.message import MessagePlugin
     message = MessagePlugin()
@@ -104,7 +105,7 @@ async def test_cancel_session_id_routing() -> None:
     loop._models.get = lambda scene: fake
 
     loop.ctx.on("msg_input", loop._on_input)
-    cancel = CancelPlugin()
+    cancel = CmdCancelPlugin()
     cancel.load(loop.ctx, {})
 
     from agent.plugins.message import MessagePlugin
@@ -139,7 +140,7 @@ async def test_cancel_noop_for_unknown() -> None:
     loop._models.get = lambda scene: fake
 
     loop.ctx.on("msg_input", loop._on_input)
-    cancel = CancelPlugin()
+    cancel = CmdCancelPlugin()
     cancel.load(loop.ctx, {})
 
     from agent.plugins.message import MessagePlugin

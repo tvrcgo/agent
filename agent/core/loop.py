@@ -66,6 +66,7 @@ class AgentContext:
     config: Any = None
     _bus: "EventBus | None" = field(default=None, repr=False)
     _self: "AgentLoop | None" = field(default=None, repr=False)
+    _apis: dict[str, Any] = field(default_factory=dict, repr=False)
 
     @property
     def models(self) -> Any:
@@ -80,6 +81,20 @@ class AgentContext:
 
     def off(self, event: str, handler: Any) -> None:
         self._bus.off(event, handler)
+
+    def register(self, name: str, fn: Any) -> None:
+        if name in self._apis:
+            raise ValueError(f"api '{name}' already registered")
+        self._apis[name] = fn
+
+    def invoke(self, name: str, **args: Any) -> Any:
+        fn = self._apis.get(name)
+        if fn is None:
+            raise KeyError(f"no registered api '{name}'")
+        return fn(**args)
+
+    def job(self, job_id: str) -> Job | None:
+        return self._self._jobs.get(job_id)
 
     async def emit(self, event: str, job: Job | None = None, **data: Any) -> Any:
         # 模式由 events.EVENT_MODES 决定：serial（非 None 短路）/ parallel（并发观察）

@@ -454,8 +454,8 @@ async def test_e2e_cancel() -> None:
     session._base_path = Path(tempfile.mkdtemp(prefix="e2e-cancel-"))
 
     loop.ctx.on("msg_input", loop._on_input)
-    from agent.plugins.cancel import CancelPlugin
-    cancel = CancelPlugin()
+    from agent.plugins.cmd_cancel import CmdCancelPlugin
+    cancel = CmdCancelPlugin()
     cancel.load(loop.ctx, {})
     await loop.ctx.emit("agent_start")
 
@@ -655,8 +655,8 @@ async def test_e2e_cancel_orphan_cleanup() -> None:
     """
     loop = _make_loop([])
     loop._tools.register(EchoTool())
-    from agent.plugins.cancel import CancelPlugin
-    cancel = CancelPlugin()
+    from agent.plugins.cmd_cancel import CmdCancelPlugin
+    cancel = CmdCancelPlugin()
     cancel.load(loop.ctx, {})
 
     from agent.plugins.message import MessagePlugin

@@ -44,13 +44,12 @@ class SubJobTool(Tool):
         if len(jobs_to_run) > 5:
             return f"Error: at most 5 sub-jobs allowed, got {len(jobs_to_run)}"
 
-        subjob = getattr(ctx, "subjob", None)
-        if subjob is None:
-            return "Error: subjob not available"
-
         async def run_one(j: dict, i: int) -> tuple[int, str, str]:
             content = j.get("content", f"job-{i + 1}")
-            future = await subjob(content, job, ctx)
+            try:
+                future = await ctx.invoke("subjob", content=content, parent_job=job, ctx=ctx)
+            except KeyError:
+                return (i, content, "Error: subjob not available")
             result = await future
             return (i, content, result)
 

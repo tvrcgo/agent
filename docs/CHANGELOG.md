@@ -1,6 +1,28 @@
 # CHANGELOG
 > 新内容放前面，同一天内容合并；版本号和PR ID、Issue ID没有可省略
 
+## [unreleased] - 2026-08-25
+
+### 核心摘要
+新增 `/reset` 会话重置指令，插件 `cmd-reset`（`plugins/cmd_reset.py`）承载，与 pause/cancel 同范式：接收 `cmd_reset` 命令直接处理，不新增领域事件；`pause`/`cancel` 插件同步重命名为 `cmd_pause`/`cmd_cancel`（对齐 cmd_ 前缀）。配套新增 **ctx 插件方法注册机制（gRPC 风格）**：`ctx.register(name, fn)`（如 `ctx.register("reset_session", self.reset)`）把对外方法注册进 `ctx._apis`，`ctx.invoke(name, **args)` 跨插件调用；注册不触碰 ctx 本体，默认成员天然不可被覆盖；**禁止经 `ctx._self` 私有对象访问/操作其他插件实例**。loop 自身注册 `cancel_job`/`drop_queued_messages`，session 插件注册 `reset_session`；cmd-reset 的三个操作（取消在飞 job、丢弃排队消息、清空会话历史）统一经 `ctx.invoke` 调用，同一守卫写法。
+
+### 变更
+- 新增：`core/loop.py` `AgentContext.register(name, fn)` + `invoke(name, **args)`——name 即注册键，收进 `_apis` 扁平 dict，重复注册抛 `ValueError`，未注册调用抛 `KeyError`；`AgentContext.job(job_id)` 内置按 job id 获取 job（不走注册机制，job.id 由输入赋值、与会话 id 不默认一致）
+- 新增：`plugins/session.py` 注册 `reset_session`（`ctx.register("reset_session", self.reset)`，清内存态 + 删 JSONL，后续同 id 输入冷启动为全新会话）
+- 新增：`plugins/cmd_cancel.py` 注册 `cancel_job` API（经 `ctx.job(job_id)` 定位 job → `Task.cancel()` + 等有序收尾）；`cmd_cancel` 指令 handler 同步改用 `ctx.job(id)`，不再直接访问 `ctx._self._jobs`
+- 变更：`plugins/subjob.py` 不再访问 loop 私有 `_jobs`——job 树由插件自身经 `job_start`/`job_end` 维护 `_jobs` 快照；`ctx.subjob = ...` 自由挂载改为 `ctx.register("subjob", ...)`；subjob 工具经 `ctx.invoke("subjob", ...)` 调用（不再 `getattr(ctx, "subjob")`）
+- 新增：`plugins/cmd_reset.py` `/reset` 指令——`cmd_reset` 经 `ctx.invoke("cancel_job", ...)` 取消目标会话在飞 job 并等其有序收尾（排队消息随 job 收尾由 loop 清理，无需单独 API）、`ctx.invoke("reset_session", ...)` 清空会话历史（统一未注册 warning 兜底）、回执 `Session reset`；支持 `session_id` 路由（可重置子 job 会话）
+- 变更：`plugins/pause.py`/`plugins/cancel.py` 重命名为 `cmd_pause.py`/`cmd_cancel.py`，插件名同步为 `cmd-pause`/`cmd-cancel`（类名 `CmdPausePlugin`/`CmdCancelPlugin`）
+- 变更：`config.yml` plugins 追加 `- cmd_pause`、`- cmd_cancel`、`- cmd_reset`
+- 变更：`playground/index.html` 输入框 placeholder 补充 `/reset`
+- 测试：新增 `tests/scripts/test_reset.py` 6 用例（ctx.register/invoke 机制 + 仅显式方法 + KeyError + 重复注册 + 默认成员隔离、历史清空 + 重置后全新上下文、在飞 job 取消、session_id 路由、未知会话 no-op + 幂等、未加载 session 插件时 reset 不崩），6/6 通过；pause/cancel 插件重命名后 test_pause/test_cancel/test_e2e 同步更新；存量回归全绿（cancel 3/3、pause 7/7、e2e 11/11、subjob 6/6、followup 7/7、scene_registry 9/9）
+- 文档：`AGENTS.md` 补充 ctx 插件方法注册机制（AgentContext 段 + 架构规范 + plugin 清单）；`tests/README.md` 补充 test_reset.py
+
+### 上下文
+- 机制：插件间调用从「经 `ctx._self` 私有对象操作实例」收敛为「`ctx.register(name, fn)` → `ctx.invoke(name, **args)`」gRPC 风格；注册只挂显式方法、全部收进 `_apis`，不承载运行时状态（状态仍走事件/`job.data`）
+- 取消语义：reset 先 cancel 在飞 job 并 await 其 `job_end` 收尾，保证重置后会话干净、不会被并发收尾路径污染；不清理 workspace 工作目录（会话重置 ≠ 文件清理，用户已确认）
+- 影响范围：`core/loop.py`、`plugins/cmd_reset.py`、`plugins/session.py`、`config.yml`、`playground/index.html`、`tests/`、`docs/`、`AGENTS.md`
+
 ## [unreleased] - 2026-08-24
 
 ### 核心摘要

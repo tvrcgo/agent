@@ -64,8 +64,9 @@ plugins:
   - logging
   - confirm:
       timeout: 120
-  - pause
-  - cancel
+  - cmd_pause
+  - cmd_cancel
+  - cmd_reset
   - tool_guard:
       review_tools:
         - shell

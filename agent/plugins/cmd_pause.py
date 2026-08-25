@@ -14,8 +14,8 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class PausePlugin(Plugin):
-    name = "pause"
+class CmdPausePlugin(Plugin):
+    name = "cmd-pause"
 
     def __init__(self) -> None:
         self._gates: dict[str, asyncio.Event] = {}
@@ -27,11 +27,11 @@ class PausePlugin(Plugin):
         ctx.on("tools_start", self._on_pause_point)
         ctx.on("cmd_pause", self._on_cmd_pause)
         ctx.on("cmd_resume", self._on_cmd_resume)
-        logger.info("PausePlugin loaded")
+        logger.info("CmdPausePlugin loaded")
 
     def unload(self) -> None:
         self._gates.clear()
-        logger.info("PausePlugin shut down")
+        logger.info("CmdPausePlugin shut down")
 
     async def _on_job_start(self, ctx: AgentContext, evt: Event) -> None:
         if evt.job is not None:

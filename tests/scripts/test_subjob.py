@@ -46,7 +46,7 @@ async def test_result_aggregation():
         future.set_result(f"Result for: {content}")
         return future
 
-    ctx.subjob = mock_subjob
+    ctx.register("subjob", mock_subjob)
 
     tool = SubJobTool()
     jobs = [
@@ -74,7 +74,7 @@ async def test_too_many_jobs():
         future.set_result(f"Result for: {content}")
         return future
 
-    ctx.subjob = mock_subjob
+    ctx.register("subjob", mock_subjob)
 
     tool = SubJobTool()
     jobs = [{"content": f"job-{i}"} for i in range(6)]
@@ -96,13 +96,13 @@ async def test_max_depth_reached():
     )
 
     calls = []
-    async def mock_subjob(content, pj, c):
+    async def mock_subjob(content, parent_job, ctx):
         calls.append(content)
         future: asyncio.Future[str] = asyncio.get_event_loop().create_future()
         future.set_result(f"Error: maximum sub-job depth (2) reached")
         return future
 
-    ctx.subjob = mock_subjob
+    ctx.register("subjob", mock_subjob)
 
     tool = SubJobTool()
     result = await tool.execute({"jobs": [{"content": "task A"}]}, ctx=ctx, job=parent_job)
@@ -125,14 +125,14 @@ async def test_parallel_execution():
     )
 
     results = {}
-    async def mock_subjob(content, pj, c):
+    async def mock_subjob(content, parent_job, ctx):
         future: asyncio.Future[str] = asyncio.get_event_loop().create_future()
         await asyncio.sleep(0.1)
         results[content] = f"Result for {content}"
         future.set_result(results[content])
         return future
 
-    ctx.subjob = lambda c, pj, cx: mock_subjob(c, pj, cx)
+    ctx.register("subjob", lambda content, parent_job, ctx: mock_subjob(content, parent_job, ctx))
 
     tool = SubJobTool()
     jobs = [

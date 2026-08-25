@@ -11,7 +11,7 @@ from agent.core.events import Event
 from agent.core.model import ModelResponse, ToolCall
 from agent.core.tool import Tool
 from agent.plugins.session import SessionPlugin
-from agent.plugins.pause import PausePlugin
+from agent.plugins.cmd_pause import CmdPausePlugin
 
 
 class EchoTool(Tool):
@@ -106,8 +106,8 @@ def _make_loop(tools: list, stream: bool = False) -> AgentLoop:
 
 def _install_base(loop: AgentLoop) -> None:
     loop.ctx.on("msg_input", loop._on_input)
-    from agent.plugins.cancel import CancelPlugin
-    cancel = CancelPlugin()
+    from agent.plugins.cmd_cancel import CmdCancelPlugin
+    cancel = CmdCancelPlugin()
     cancel.load(loop.ctx, {})
     return cancel
 
@@ -134,7 +134,7 @@ async def test_pause_at_tools_start() -> None:
     _install_base(loop)
 
     session = _install_session(loop, "pause-e2e-")
-    pause = PausePlugin()
+    pause = CmdPausePlugin()
     pause.load(loop.ctx, {})
     message = _install_message(loop)
 
@@ -173,7 +173,7 @@ async def test_pause_at_turn_start() -> None:
     _install_base(loop)
 
     session = _install_session(loop, "pause-turn-")
-    pause = PausePlugin()
+    pause = CmdPausePlugin()
     pause.load(loop.ctx, {})
     message = _install_message(loop)
 
@@ -208,7 +208,7 @@ async def test_tools_start_serial_order_pause_first() -> None:
     session = _install_session(loop, "pause-order-")
     probe_ran: list[str] = []
 
-    pause = PausePlugin()
+    pause = CmdPausePlugin()
     pause.load(loop.ctx, {})
 
     async def _probe(ctx: AgentContext, evt: Event) -> None:
@@ -256,7 +256,7 @@ async def test_tools_start_serial_order_probe_first() -> None:
         probe_ran.append(evt.job.id if evt.job else "?")
 
     loop.ctx.on("tools_start", _probe)
-    pause = PausePlugin()
+    pause = CmdPausePlugin()
     pause.load(loop.ctx, {})
 
     message = _install_message(loop)
@@ -293,7 +293,7 @@ async def test_cancel_while_paused() -> None:
     _install_base(loop)
 
     session = _install_session(loop, "pause-cancel-")
-    pause = PausePlugin()
+    pause = CmdPausePlugin()
     pause.load(loop.ctx, {})
     message = _install_message(loop)
 
@@ -328,7 +328,7 @@ async def test_job_end_cleans_gate() -> None:
     _install_base(loop)
 
     session = _install_session(loop, "pause-clean-")
-    pause = PausePlugin()
+    pause = CmdPausePlugin()
     pause.load(loop.ctx, {})
     message = _install_message(loop)
 
@@ -357,7 +357,7 @@ async def test_cmd_pause_session_id_routing() -> None:
     _install_base(loop)
 
     session = _install_session(loop, "pause-route-")
-    pause = PausePlugin()
+    pause = CmdPausePlugin()
     pause.load(loop.ctx, {})
     message = _install_message(loop)
 
