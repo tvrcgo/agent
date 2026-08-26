@@ -10,7 +10,7 @@ from urllib.parse import parse_qs, urlparse
 
 import websockets
 from websockets.asyncio.server import Server, ServerConnection
-from websockets.exceptions import ConnectionClosed
+from websockets.exceptions import ConnectionClosed, InvalidHandshake
 
 from agent.core.plugin import Plugin
 from agent.core.io import InputMessage, OutputMessage
@@ -114,7 +114,10 @@ class ClientSession:
 class _SuppressHandshakeNoise(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
         if record.exc_info:
-            if isinstance(record.exc_info[1], ConnectionClosed):
+            exc = record.exc_info[1]
+            # 握手失败噪音：客户端连上端口后不发请求即关闭（如 agent 健康检查的 TCP 探测），
+            # websockets 包装为 InvalidMessage/InvalidHandshake 子类；这类空连接握手失败无害，静默
+            if isinstance(exc, (ConnectionClosed, InvalidHandshake)):
                 return False
         return True
 
