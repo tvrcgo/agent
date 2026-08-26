@@ -19,7 +19,7 @@ model:
           max_tokens: 128000
 
   alias:
-    main: local:glm-5
+    main: deepseek:v4-pro
     flash: deepseek:v4-flash
 
 agent:
@@ -46,6 +46,7 @@ tools:
       access_key_secret: ${OSS_ACCESS_KEY_SECRET}
       base_path: agent/outputs
       public_url: ${OSS_PUBLIC_URL}
+  - todo
 
 plugins:
   - websocket:
