@@ -10,3 +10,6 @@ dist/
 data/
 workspace/
 settings.local.json
+node_modules/
+release/
+desktop/tests/*.txt

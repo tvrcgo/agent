@@ -30,6 +30,24 @@
 
 **tools（`agent/tools/`）**：内置工具，每目录一个 Tool 子类；**services（`services/`）**：外部服务独立部署，通过共享 Docker 网络通信，agent 不强依赖。
 
+## 桌面客户端（`desktop/`）
+
+Electron 桌面客户端，后台起一个进程运行 agent，前台实现交互逻辑。shell 复刻自 Agents-Anywhere/desktop-next（侧边栏导航 + 卡片视图 + 对话框/toast），聊天会话区复刻自 DeepSeek Harness `apps/web`（ui-conversation 视觉：hero 空态、浮动输入胶囊栏、消息流、面包屑顶栏、右侧工具详情面板、底部坞任务面板、审批接管输入坞）。顶栏仅标题（agent 启停在概览、语言/主题在设置）。进程模型：
+
+- **主进程（`desktop/electron/main.cjs`）**：创建窗口（`autoHideMenuBar` + `Menu.setApplicationMenu(null)` 彻底移除系统菜单栏）、IPC（agent 启停/状态、配置读写、设置持久化、日志环形缓冲、会话文件存储、危险操作、本地文件打开）、启动时迁移清空旧扁平会话、退出清理
+- **node 子进程（`desktop/agent-manager.cjs`）**：spawn Python agent（`python -m agent`，固定读默认 `config.yml`）、TCP 健康检查端口就绪、退出/崩溃清理
+- **renderer（`desktop/src/`）**：Vite + React + TSX 构建，产物到 `desktop/dist/`。视图：`运行状态页`（状态+日志合并，默认页：上方紧凑状态栏显示 agent/ws 状态 + 启停按钮，下方滚动日志）、`聊天`（`components/chat/`：ConversationRoot 组装 HeroShell/InputBar/ChatView/MessageItem/ReasoningRow/AssistantMarkdown/ToolCallCard/DetailsPanel/TodoPanel/ApprovalPanel，**直连** `ws://127.0.0.1:<port>?session_id=...`，事件流聚合为会话节点树；无会话/空会话显示整屏 hero 空态，无会话时不显示标题栏）、`设置`（启动/Agent 配置/本地文件/外观主题与语言/危险操作）。复刻 shadcn 风格组件（`src/components/ui/`）+ harness 语义 token（`components/chat/tokens.css` 映射 `--dsw-*`/`--dsh-*`）
+
+要点：
+- 后端 agent 用 **`config.yml` 单一配置**（复用核心插件/工具，主模型 DeepSeek 云端，保留 websearch/cloud_file/mcp 外部依赖与 `todo` 工具；无独立桌面配置）
+- 会话持久化：主进程写 userData `sessions/<id>.json`（**节点树格式** `{id,title,created_at,updated_at,nodes[]}`，nodes 含 user 节点与 assistant 回合 reasoning/tool/text blocks；旧扁平格式启动时清空）；配置存 userData `config.json`；设置（主题/语言/登录自启）存 userData `settings.json`；**打开应用即自动启动 agent**（固定行为，无开关）
+- 侧边栏：仅常驻**会话列表区**（新建/切换/删除，`components/desktop-shell.tsx` 管理，每项仅在会话进行中显示左侧方形 loading 动画指示，由各会话自己的 WS 连接收到的 `status` 事件上报汇总，无后端广播、空闲不显示）与底部**设置**按钮 + 右侧窄**状态点**按钮（无文字、36px 见方靠右，`StatusDot`，点击打开运行状态页）；无概览/聊天导航按钮（聊天经会话列表进入，运行状态页为默认页）
+- 聊天交互：hero 空态输入自动建会话；Enter 发送（无会话先建）；`/pause` `/resume` `/cancel` 命令；confirm 事件 → 底部坞接管为 ApprovalPanel（允许/拒绝 → `cmd_confirm`）；工具调用 → ToolCallCard + 点击联动右侧 DetailsPanel 抽屉（Input/Output）；**TodoPanel 仅当模型调用 `todo` 工具**（`agent/tools/todo/`，返回完整清单 JSON）生成任务清单时展示（完成划线+绿勾/未完成灰虚线）；markdown 用 react-markdown + remark-gfm
+- 会话保存：节点树写入 userData `sessions/<id>.json`；保存目标一律取 `currentIdRef.current`（实时会话）而非 WS 回调闭包捕获的 `currentId`，避免回复写到旧会话导致切换后内容丢失；切换会话时先固化并保存旧会话进行中（未完成）的回复
+- 主题/语言：light/dark/system 三态 + en/zh 双语，存 settings.json 持久化，设置页修改经 `agent:state` 推送即时生效
+- 启动命令：`cd desktop && npm run dev`（vite watch 自动重建 + Electron 热重载，等价旧 `npm start` 流程）；正式构建 `npm run build` 后 `npm start`；打包：`npm run pack`/`npm run dist`（electron-builder，需先 build renderer）
+- `desktop/tests/` 自带测试：`test-agent-manager.cjs`（生命周期）、`test-ws-flow.cjs`/`test-ws-tool.cjs`（WS 链路）、`test-confirm-unit.py`（confirm 决策）、`test-storage.cjs`（存储语义）、`test-e2e-replica.py`（CDP 驱动完整 UI E2E 38 项）、`test-packaged.py`（打包版 CDP 9224 验证），结果文件输出到本目录
+
 ## 场景扩展（基座 + 场景目录）
 
 本仓库是**基座**：core 执行机制 + 内置插件/工具，每场景一个容器 `FROM agent-base`。垂直场景是**独立目录**（自己的 plugins/tools/AGENTS.md/skills），COPY 到容器 `/app` 下与基座分层存放（不侵入 `agent/` 包），无需打包。场景间不共享工具。
