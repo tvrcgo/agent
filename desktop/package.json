@@ -1,0 +1,69 @@
+{
+  "name": "tvrcgo-agent-desktop",
+  "version": "0.2.0",
+  "description": "Agent 桌面客户端：后台进程运行 agent，前台交互（复刻 Agents-Anywhere desktop-next UI）",
+  "type": "module",
+  "main": "electron/main.cjs",
+  "private": true,
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "start": "electron .",
+    "build:renderer": "vite build",
+    "build": "npm run build:renderer",
+    "typecheck": "tsc --noEmit",
+    "pack": "npm run build && electron-builder --dir",
+    "dist": "npm run build && electron-builder"
+  },
+  "dependencies": {
+    "lucide-react": "^0.525.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
+    "sonner": "^2.0.7"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.1.0",
+    "@types/node": "^22.15.0",
+    "@types/react": "^19.1.0",
+    "@types/react-dom": "^19.1.0",
+    "@vitejs/plugin-react": "^4.4.1",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "electron": "^33.0.0",
+    "electron-builder": "^25.0.0",
+    "tailwind-merge": "^2.6.0",
+    "tailwindcss": "^4.1.0",
+    "tw-animate-css": "^1.4.0",
+    "typescript": "^5.8.0",
+    "vite": "^6.3.0"
+  },
+  "build": {
+    "appId": "com.tvrcgo.agent.desktop",
+    "productName": "Agent Desktop",
+    "files": [
+      "dist/**",
+      "electron/**",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "agent-manager.cjs",
+        "to": "agent-manager.cjs"
+      }
+    ],
+    "directories": {
+      "output": "release"
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "signAndEditExecutable": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  }
+}

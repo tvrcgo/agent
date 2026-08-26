@@ -1,0 +1,84 @@
+/* DeepSeek Harness 风格语义 token —— 映射到现有 oklch 主题（light/dark 共用）
+   复刻自 packages/client/ui-conversation 的 --dsw-alias-* / --dsh-* 变量族。
+   同一主题数据源，新增 harness 风格命名，只用于聊天复刻组件。 */
+
+:root,
+.dark {
+  /* 布局尺寸（harness ConversationRoot） */
+  --dsh-chat-content-width: 748px;
+  --dsh-composer-card-max-width: calc(var(--dsh-chat-content-width) + 32px);
+  --dsh-composer-side-clearance: 16px;
+  --dsh-composer-dock-inset: 8px;
+  --dsh-composer-text-max-height: 336px; /* 14 行 × 24px */
+  --dsh-composer-stack-gap: 10px;
+  --dsh-composer-height: 0px; /* 由 ResizeObserver 写入 */
+
+  /* 表面 / 背景 */
+  --dsw-bg-base: var(--background);
+  --dsw-specific-tip: var(--card);
+  --dsw-specific-menu: var(--popover);
+  --dsw-specific-input-major: var(--card);
+  --dsw-specific-selector: var(--muted);
+
+  /* 文字层级 */
+  --dsw-label-primary: var(--foreground);
+  --dsw-label-secondary: color-mix(in oklab, var(--foreground) 72%, var(--background));
+  --dsw-label-tertiary: color-mix(in oklab, var(--foreground) 48%, var(--background));
+  --dsw-label-caption: color-mix(in oklab, var(--foreground) 40%, var(--background));
+  --dsw-label-dimmed: color-mix(in oklab, var(--foreground) 28%, var(--background));
+  --dsw-label-primary-bluish: color-mix(in oklab, var(--foreground) 88%, oklch(0.6 0.16 250));
+
+  /* 边框层级 */
+  --dsw-border-l1: var(--border);
+  --dsw-border-l2: color-mix(in oklab, var(--border) 80%, transparent);
+  --dsw-border-l2-darkmode-thin: color-mix(in oklab, var(--border) 55%, transparent);
+  --dsw-border-l3: color-mix(in oklab, var(--border) 50%, transparent);
+  --dsw-border-l4: color-mix(in oklab, var(--border) 30%, transparent);
+  --dsw-border-inverted: color-mix(in oklab, var(--foreground) 22%, transparent);
+
+  /* 交互 */
+  --dsw-interactive-bg-hover: var(--muted);
+  --dsw-interactive-bg-hover-solid: var(--accent);
+  --dsw-interactive-bg-hover-danger: color-mix(in oklab, var(--destructive) 12%, transparent);
+
+  /* 状态 */
+  --dsw-state-success-primary: oklch(0.61 0.19 152);
+  --dsw-state-error-primary: var(--destructive);
+  --dsw-state-warn-primary: oklch(0.62 0.14 65);
+  --dsw-state-warn-secondary: color-mix(in oklab, oklch(0.62 0.14 65) 60%, transparent);
+  --dsw-state-warn-tertiary: color-mix(in oklab, oklch(0.62 0.14 65) 14%, transparent);
+  --dsw-state-warn-label: oklch(0.55 0.14 65);
+  --dsw-state-business-primary: oklch(0.55 0.2 255);
+  --dsw-state-business-tertiary: color-mix(in oklab, oklch(0.55 0.2 255) 10%, transparent);
+
+  /* 按钮信息色（发送键蓝） */
+  --dsw-button-info-fill: oklch(0.55 0.22 260);
+  --dsw-button-info-hover: oklch(0.5 0.22 260);
+  --dsw-button-floating-fill: var(--card);
+
+  /* 阴影 */
+  --dsw-shadow-lv2: 0 1px 3px 0 oklch(0 0 0 / 0.1), 0 1px 2px -1px oklch(0 0 0 / 0.1);
+  --dsw-shadow-lv3: 0 4px 12px -2px oklch(0 0 0 / 0.15), 0 2px 4px -2px oklch(0 0 0 / 0.1);
+
+  /* 品牌蓝 shimmer（turnStatus） */
+  --dsw-brand-shimmer-1: oklch(0.55 0.22 260);
+  --dsw-brand-shimmer-2: color-mix(in oklab, oklch(0.55 0.22 260) 45%, var(--background));
+  --dsw-brand-shimmer-3: oklch(0.7 0.18 260);
+
+  /* 用户消息浅蓝气泡（区分模型回复） */
+  --dsw-bubble-user-bg: color-mix(in oklab, oklch(0.55 0.22 260) 8%, var(--background));
+
+  /* markdown 代码块 */
+  --dsw-markdown-code-block: var(--muted);
+  --dsw-markdown-inline-code: color-mix(in oklab, var(--muted) 80%, transparent);
+}
+
+.dark {
+  --dsw-specific-input-major: oklch(0.21 0.008 250);
+  --dsw-specific-tip: oklch(0.24 0.01 250);
+  --dsw-specific-menu: oklch(0.24 0.01 250);
+  --dsw-specific-selector: oklch(0.29 0.012 250);
+  --dsw-markdown-code-block: oklch(0.19 0.006 250);
+  --dsw-markdown-inline-code: oklch(0.26 0.01 250);
+  --dsw-bubble-user-bg: color-mix(in oklab, oklch(0.55 0.22 260) 22%, var(--background));
+}
