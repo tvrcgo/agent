@@ -37,54 +37,7 @@ cd services/searxng_search && docker compose up -d
 
 ## 配置
 
-`config.yml` 覆盖默认值，支持 `${VAR}` 环境变量展开。`agent/AGENTS.md` 作为 system prompt。
-
-```yaml
-model:
-  providers:
-    deepseek:
-      base_url: https://api.deepseek.com
-      api_key: ${DEEPSEEK_API_KEY}
-      models:
-        v4-pro:
-          name: deepseek-v4-pro
-          max_tokens: 128000
-  alias:
-    main: deepseek:v4-pro
-    flash: deepseek:v4-flash
-
-agent:
-  max_concurrent: 10
-  max_iterations: 100
-
-tools:
-  - read_file
-  - write_file
-  - edit_file
-  - shell
-  - subjob
-  - websearch:
-      search_url: http://searxng:8080
-
-plugins:
-  - websocket:
-      host: 0.0.0.0
-      port: 8765
-  - message
-  - session:
-      max_load_messages: 100
-      max_tokens: 128000
-      compress_threshold: 0.9
-      system_prompt_path: agent/AGENTS.md
-  - subjob:
-      max_depth: 2
-  - cmd_pause
-  - cmd_cancel
-  - cmd_reset
-  - logging
-  - mcp:
-      base_url: http://mcp:8001
-```
+完整配置项见仓库根目录 `config.yml`（覆盖默认值，支持 `${VAR}` 环境变量展开）；`agent/AGENTS.md` 作为 system prompt。
 
 ## 外部服务
 
