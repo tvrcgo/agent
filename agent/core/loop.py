@@ -76,8 +76,8 @@ class AgentContext:
     def tools(self) -> "ToolRegistry":
         return self._self._tools
 
-    def on(self, event: str, handler: Any) -> None:
-        self._bus.on(event, handler)
+    def on(self, event: str, handler: Any, tail: bool | int = False) -> None:
+        self._bus.on(event, handler, tail=tail)
 
     def off(self, event: str, handler: Any) -> None:
         self._bus.off(event, handler)
@@ -97,7 +97,7 @@ class AgentContext:
         return self._self._jobs.get(job_id)
 
     async def emit(self, event: str, job: Job | None = None, **data: Any) -> Any:
-        # 模式由 events.EVENT_MODES 决定：serial（非 None 短路）/ parallel（并发观察）
+        # 模式由 events.EVENT_MODES 决定：serial（非 None 短路）/ parallel（并发观察）/ waterfall（顺序流水线）
         return await self._bus.emit(event, job=job, ctx=self, **data)
 
 

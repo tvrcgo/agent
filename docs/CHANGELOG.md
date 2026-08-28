@@ -1,6 +1,20 @@
 # CHANGELOG
 > 新内容放前面，同一天内容合并；版本号和PR ID、Issue ID没有可省略
 
+## [unreleased] - 2026-08-28
+
+### 核心摘要
+`events` 事件总线新增第三种分发模式 `waterfall`（顺序流水线）：handler 按注册顺序执行，非 None 返回值写入 `evt.data` 供下游读取，None 透传，最终结果作为 `emit` 返回值；`on`/`ctx.on` 支持 `tail` 注册链尾兜底 handler（保证在主体流水线之后执行、与注册顺序解耦，仅 waterfall 生效），`tail` 传整数可控制多个链尾 handler 的顺序（小者先执行）。拦截/短路决策仍用既有 `serial` 模式，不改变任何现有事件登记与行为。
+
+### 变更
+- 新增：`core/events.py` `DispatchMode.WATERFALL` + `_waterfall` 调度（顺序流水线、异常隔离）；`EventBus.on(event, handler, tail=False)` 支持链尾（`tail` 为 `bool | int`，整数即链尾顺序）与 `_tails` 链尾列表，`off` 覆盖主体/链尾两列表
+- 新增：`core/loop.py` `AgentContext.on(event, handler, tail=False)` 透传
+- 测试：新增 `tests/scripts/test_waterfall.py` 13 用例（纯流水线、None 透传、链尾观察/修正、多链尾顺序、tail 整数控制顺序、空事件返回初始 data、异常隔离、mode 标记、tail 仅 waterfall、off 移除链尾、serial/parallel 回归），13/13 通过；存量回归全绿（scene_registry 9/9、pause 7/7、cancel 3/3、reset 6/6、followup 7/7、subjob 6/6）
+- 文档：`AGENTS.md` 请求-响应原语补充 waterfall/tail；`tests/README.md` 补充 test_waterfall.py
+
+### 上下文
+- 影响范围：`agent/core/events.py`、`agent/core/loop.py`、`tests/scripts/test_waterfall.py`、`docs/CHANGELOG.md`、`AGENTS.md`
+
 ## [unreleased] - 2026-08-25
 
 ### 核心摘要

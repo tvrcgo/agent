@@ -19,6 +19,7 @@
 - [test_pause.py](scripts/test_pause.py) — 暂停/恢复单元测试（挂载点阻塞、serial 顺序、cancel 中断、job_end 清理、session_id 路由）
 - [test_cancel.py](scripts/test_cancel.py) — 取消插件单元测试（cmd_cancel → cancelled、session_id 路由、未知 job no-op）
 - [test_reset.py](scripts/test_reset.py) — ctx.register/invoke（gRPC 风格，`register(name, fn)`）插件方法注册机制 + 会话重置插件单元测试（cmd_reset → 历史清空 + JSONL 删除 + 回执、在飞 job 取消、session_id 路由、未知会话 no-op、未加载 session 插件不崩）
+- [test_waterfall.py](scripts/test_waterfall.py) — waterfall 事件分发模式单元测试（顺序流水线、None 透传、链尾 tail 兜底观察/修正、tail 整数控制链尾顺序、异常隔离、tail 仅 waterfall 生效、serial/parallel 回归）
 - [test_e2e.py](scripts/test_e2e.py) — 端到端集成测试（fake LLM，无网络依赖）
   - msg_input → LLM → 工具/subjob 递归 → msg_output 基础链路
   - 流式（llm_chunk → stream 消息）
