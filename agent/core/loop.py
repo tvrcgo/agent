@@ -184,7 +184,9 @@ class AgentLoop:
                 steering = q.drain()
 
                 job.turn = Turn(steering_messages=steering)
-                await ctx.emit("turn_start", job=job)
+                result = await ctx.emit("turn_start", job=job)
+                if isinstance(result, dict) and isinstance(result.get("prompts"), list):
+                    job.turn.prompts = result["prompts"]
                 job.status = "thinking"
                 await ctx.emit("llm_start", job=job)
 

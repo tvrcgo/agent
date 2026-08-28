@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import Any, TYPE_CHECKING
 
 import yaml
 
@@ -95,10 +95,9 @@ class SkillPlugin(Plugin):
     def unload(self) -> None:
         self._registry.clear()
 
-    async def _on_turn_start(self, ctx: AgentContext, evt: Event) -> None:
-        job = evt.job
-        if job is None or job.turn is None:
-            return
+    async def _on_turn_start(self, ctx: AgentContext, evt: Event) -> Any:
         prompt = self._registry.get_skills_prompt()
-        if prompt:
-            job.turn.prompts.append(prompt)
+        if not prompt:
+            return None
+        evt.data.setdefault("prompts", []).append(prompt)
+        return evt.data

@@ -4,16 +4,19 @@
 ## [unreleased] - 2026-08-28
 
 ### 核心摘要
-`events` 事件总线新增第三种分发模式 `waterfall`（顺序流水线）：handler 按注册顺序执行，非 None 返回值写入 `evt.data` 供下游读取，None 透传，最终结果作为 `emit` 返回值；`on`/`ctx.on` 支持 `tail` 注册链尾兜底 handler（保证在主体流水线之后执行、与注册顺序解耦，仅 waterfall 生效），`tail` 传整数可控制多个链尾 handler 的顺序（小者先执行）。拦截/短路决策仍用既有 `serial` 模式，不改变任何现有事件登记与行为。
+`events` 事件总线新增第三种分发模式 `waterfall`（顺序流水线）：handler 按注册顺序执行，非 None 返回值写入 `evt.data` 供下游读取，None 透传，最终结果作为 `emit` 返回值；`on`/`ctx.on` 支持 `tail` 注册链尾兜底 handler（保证在主体流水线之后执行、与注册顺序解耦，仅 waterfall 生效），`tail` 传整数可控制多个链尾 handler 的顺序（小者先执行）。拦截/短路决策仍用既有 `serial` 模式，不改变任何现有事件登记与行为。**首个落地场景 `turn_start`**：提示段组装从 parallel（并发追加 `job.turn.prompts`、顺序非确定）改为 waterfall——session（当前时间）与 skill（技能段）变为主体贡献者把提示段写入 `evt.data["prompts"]`，**loop 作为 Turn 的持有者**把 `emit` 返回值落盘 `job.turn.prompts`（插件无需感知 Turn 结构），顺序按注册顺序确定；cmd_pause 暂停、`_on_llm_start` 消费均不变。
 
 ### 变更
 - 新增：`core/events.py` `DispatchMode.WATERFALL` + `_waterfall` 调度（顺序流水线、异常隔离）；`EventBus.on(event, handler, tail=False)` 支持链尾（`tail` 为 `bool | int`，整数即链尾顺序）与 `_tails` 链尾列表，`off` 覆盖主体/链尾两列表
 - 新增：`core/loop.py` `AgentContext.on(event, handler, tail=False)` 透传
-- 测试：新增 `tests/scripts/test_waterfall.py` 13 用例（纯流水线、None 透传、链尾观察/修正、多链尾顺序、tail 整数控制顺序、空事件返回初始 data、异常隔离、mode 标记、tail 仅 waterfall、off 移除链尾、serial/parallel 回归），13/13 通过；存量回归全绿（scene_registry 9/9、pause 7/7、cancel 3/3、reset 6/6、followup 7/7、subjob 6/6）
-- 文档：`AGENTS.md` 请求-响应原语补充 waterfall/tail；`tests/README.md` 补充 test_waterfall.py
+- 变更：`core/events.py` `turn_start` 登记为 `WATERFALL`（提示段组装）
+- 变更：`core/loop.py` 每轮迭代捕获 `turn_start` emit 返回值并落盘 `job.turn.prompts`（Turn 持有者职责，插件只产出 evt.data）
+- 变更：`plugins/session.py` `_on_turn_start` 变主体贡献者（时间段写入 evt.data），不再直接改 `job.turn.prompts`；`plugins/skill.py` `_on_turn_start` 变主体贡献者（技能段写入 evt.data）
+- 测试：新增 `tests/scripts/test_waterfall.py` 13 用例（纯流水线、None 透传、链尾观察/修正、多链尾顺序、tail 整数控制顺序、空事件返回初始 data、异常隔离、mode 标记、tail 仅 waterfall、off 移除链尾、serial/parallel 回归），13/13 通过；新增 `tests/scripts/test_turn_prompts.py` 4 用例（emit 组装顺序、无技能、无贡献者、loop 落盘集成合并进 system prompt），4/4 通过；存量回归全绿（scene_registry 9/9、pause 7/7、cancel 3/3、reset 6/6、followup 7/7、subjob 6/6）
+- 文档：`AGENTS.md` 请求-响应原语补充 waterfall/tail；`tests/README.md` 补充 test_waterfall.py、test_turn_prompts.py
 
 ### 上下文
-- 影响范围：`agent/core/events.py`、`agent/core/loop.py`、`tests/scripts/test_waterfall.py`、`docs/CHANGELOG.md`、`AGENTS.md`
+- 影响范围：`agent/core/events.py`、`agent/core/loop.py`、`agent/plugins/session.py`、`agent/plugins/skill.py`、`tests/scripts/test_waterfall.py`、`tests/scripts/test_turn_prompts.py`、`docs/CHANGELOG.md`、`AGENTS.md`
 
 ## [unreleased] - 2026-08-25
 

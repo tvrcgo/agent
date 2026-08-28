@@ -97,13 +97,10 @@ class SessionPlugin(Plugin):
             return
         self._clean_orphan_tool_calls(state)
 
-    async def _on_turn_start(self, ctx: AgentContext, evt: Event) -> None:
-        # 当前时间作为提示段追加到 job.turn.prompts
-        job = evt.job
-        if job is None or job.turn is None:
-            return
+    async def _on_turn_start(self, ctx: AgentContext, evt: Event) -> Any:
         now = datetime.now().strftime("%Y-%m-%d %A %H:%M:%S")
-        job.turn.prompts.append(f"Current time: {now}")
+        evt.data.setdefault("prompts", []).append(f"Current time: {now}")
+        return evt.data
 
     async def _on_llm_start(self, ctx: AgentContext, evt: Event) -> None:
         job = evt.job

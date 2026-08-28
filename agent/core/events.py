@@ -34,7 +34,7 @@ EVENT_MODES: dict[str, DispatchMode] = {
     "job_start": DispatchMode.PARALLEL,
     "job_end": DispatchMode.PARALLEL,
     "job_error": DispatchMode.PARALLEL,
-    "turn_start": DispatchMode.PARALLEL,
+    "turn_start": DispatchMode.WATERFALL, # 提示段组装：贡献者顺序产出提示段 → loop 落盘 job.turn.prompts
     "turn_end": DispatchMode.PARALLEL,
     "llm_start": DispatchMode.PARALLEL,
     "llm_chunk": DispatchMode.PARALLEL,
