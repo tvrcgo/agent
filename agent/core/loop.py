@@ -76,8 +76,8 @@ class AgentContext:
     def tools(self) -> "ToolRegistry":
         return self._self._tools
 
-    def on(self, event: str, handler: Any, tail: bool | int = False) -> None:
-        self._bus.on(event, handler, tail=tail)
+    def on(self, event: str, handler: Any, order: int = 0) -> None:
+        self._bus.on(event, handler, order=order)
 
     def off(self, event: str, handler: Any) -> None:
         self._bus.off(event, handler)

@@ -17,8 +17,8 @@ EventHandler = Callable[["AgentContext", "Event"], Awaitable[None]]
 
 class DispatchMode(str, Enum):
     PARALLEL = "parallel"   # 并发观察，异常隔离，返回值忽略
-    SERIAL = "serial"       # 顺序执行，首个非 None 短路并作为 emit 返回值
-    WATERFALL = "waterfall" # 顺序流水线：非 None 返回值写入 evt.data 供下游读取，主体跑完后再跑链尾 tail，最终结果作为 emit 返回值
+    SERIAL = "serial"       # 顺序执行（按 order 升序），首个非 None 短路并作为 emit 返回值
+    WATERFALL = "waterfall" # 顺序流水线（按 order 升序）：非 None 返回值写入 evt.data 供下游读取，最终结果作为 emit 返回值
     FIRE = "fire"           # 预留：提交即返回（当前无实现，勿登记）
 
 
@@ -74,30 +74,23 @@ class Event:
 class EventBus:
 
     def __init__(self) -> None:
-        self._handlers: dict[str, list[EventHandler]] = defaultdict(list)
-        self._tails: dict[str, list[tuple[int, int, EventHandler]]] = defaultdict(list)
+        self._handlers: dict[str, list[tuple[int, int, EventHandler]]] = defaultdict(list)
         self._seq = 0
 
-    def on(self, event: str, handler: EventHandler, tail: bool | int = False) -> None:
-        # tail 标记链尾兜底 handler（仅 waterfall 在主体流水线之后执行）；
-        # tail 为整数时同时指定链尾顺序（小者先执行，同值按注册顺序）；True 等同 0
-        if tail is not False:
-            order = 0 if tail is True else tail
-            self._tails[event].append((self._seq, order, handler))
-        else:
-            self._handlers[event].append(handler)
+    def on(self, event: str, handler: EventHandler, order: int = 0) -> None:
+        # handler 按 (order, 注册顺序) 升序调度：负数队头、0 即注册顺序、正数队尾（serial/waterfall；parallel 并发不消费 order）
+        self._handlers[event].append((order, self._seq, handler))
+        self._handlers[event].sort()
         self._seq += 1
 
     def off(self, event: str, handler: EventHandler) -> None:
         handlers = self._handlers.get(event)
-        if handlers and handler in handlers:
-            handlers.remove(handler)
-        tails = self._tails.get(event)
-        if tails:
-            for entry in tails:
-                if entry[2] is handler:
-                    tails.remove(entry)
-                    break
+        if not handlers:
+            return
+        for i, (_, _, h) in enumerate(handlers):
+            if h is handler:
+                del handlers[i]
+                break
 
     async def emit(self, event: str, job: "Job | None" = None, ctx: "AgentContext | None" = None, **data: Any) -> Any:
         # 模式由登记表决定：serial（非 None 短路）/ parallel（并发观察）/ waterfall（顺序流水线）
@@ -119,7 +112,7 @@ class EventBus:
         return None
 
     async def _serial(self, evt: Event, ctx: "AgentContext | None") -> Any:
-        for handler in self._handlers.get(evt.name, []):
+        for _, _, handler in self._handlers.get(evt.name, []):
             try:
                 result = await handler(ctx, evt)
             except Exception:
@@ -130,10 +123,7 @@ class EventBus:
         return None
 
     async def _waterfall(self, evt: Event, ctx: "AgentContext | None") -> Any:
-        # 主体流水线（注册顺序）→ 链尾兜底（tail：按 tail 值升序、同值按注册顺序，保证在主体之后执行）
-        tails = [h for _, _, h in sorted(self._tails.get(evt.name, []), key=lambda e: (e[1], e[0]))]
-        handlers = self._handlers.get(evt.name, []) + tails
-        for handler in handlers:
+        for _, _, handler in self._handlers.get(evt.name, []):
             try:
                 result = await handler(ctx, evt)
             except Exception:
@@ -146,7 +136,7 @@ class EventBus:
     async def _parallel(self, evt: Event, ctx: "AgentContext | None") -> None:
         handlers = self._handlers.get(evt.name, [])
         if handlers:
-            await asyncio.gather(*(self._safe_call(h, ctx, evt) for h in handlers))
+            await asyncio.gather(*(self._safe_call(h, ctx, evt) for _, _, h in handlers))
 
     async def _safe_call(self, handler: EventHandler, ctx: "AgentContext | None", evt: Event) -> None:
         try:

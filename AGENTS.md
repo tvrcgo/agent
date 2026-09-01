@@ -65,7 +65,7 @@ Electron 桌面客户端，后台起一个进程运行 agent，前台实现交�
 AgentLoop 的能力门面，贯穿 session/job 生命周期：`ctx.models`/`ctx.tools`/`ctx.config` 访问组件，`ctx.on`/`ctx.off`/`ctx.emit` 订阅发布事件，跨插件方法注册与调用见「架构规范」；`ctx.job(job_id)` 内置按 job id 获取 job（不走注册机制；job.id 由输入赋值，与会话 id 不默认一致）；领域操作由对应插件注册。事件用 `job` 参数定位具体 job（多 job 并发下 ctx 不持有 job）；per-job 静态数据与执行缓存写 `job.data`，运行时数据一律随事件传递。
 
 ### 请求-响应原语
-事件的分发模式由 `agent/core/events.py` 的 `EVENT_MODES` 登记表决定（`parallel` 并发观察 / `serial` 顺序执行、首个非 None 短路并作为 emit 返回值 / `waterfall` 顺序流水线、非 None 返回值写入 evt.data 供下游读取、最终结果作为 emit 返回值，`on` 可带 `tail` 注册链尾兜底 handler，`tail` 传整数可控制链尾 handler 顺序）。未登记的事件按 `parallel` 分发并打 warning 日志。模式是事件契约的一部分：新事件应登记；监听方可从 `evt.mode` 读取当前模式。emit 用 `asyncio.gather` 等待所有 handler 完成，单个 handler 异常被隔离记日志，不中断其他 handler 与 emit 本身。
+事件的分发模式由 `agent/core/events.py` 的 `EVENT_MODES` 登记表决定（`parallel` 并发观察 / `serial` 顺序执行、首个非 None 短路并作为 emit 返回值 / `waterfall` 顺序流水线、非 None 返回值写入 evt.data 供下游读取、最终结果作为 emit 返回值，`on` 可带 `order` 排序 handler：按 `(order, 注册顺序)` 升序执行，负数队头、0 即注册顺序、正数队尾，serial/waterfall 均生效，parallel 并发不消费）。未登记的事件按 `parallel` 分发并打 warning 日志。模式是事件契约的一部分：新事件应登记；监听方可从 `evt.mode` 读取当前模式。emit 用 `asyncio.gather` 等待所有 handler 完成，单个 handler 异常被隔离记日志，不中断其他 handler 与 emit 本身。
 
 ### 消息排队
 job 运行中收到的同 id chat 消息排队，下轮迭代前由 loop 消费为 steering 消息。
