@@ -39,6 +39,8 @@
 - 不含 `.` → 回退基座内置前缀（`agent.tools.{name}` / `agent.plugins.{name}`）
 - 含 `.` → 视为完整模块路径直接 import（场景目录）
 
+基座插件自带的工具（如 `subjob`——由 `plugins/subjob.py` 在 load 时注册进工具注册表）只在 `plugins` 中声明，**不要**在 `tools` 列表重复声明，否则会尝试加载 `agent.tools.{name}` 而失败。
+
 ## 可配置路径（session 插件）
 
 | 配置项 | 默认值 | 说明 |

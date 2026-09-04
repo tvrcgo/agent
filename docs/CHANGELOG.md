@@ -1,6 +1,21 @@
 # CHANGELOG
 > 新内容放前面，同一天内容合并；版本号和PR ID、Issue ID没有可省略
 
+## [unreleased] - 2026-09-04
+
+### 核心摘要
+subjob 子任务能力从 plugin/tool 两处收敛为插件单一归属：`SubJobTool`（LLM 工具入口：参数 schema、并发聚合）并入 `agent/plugins/subjob.py` 与 `SubJobPlugin` 同文件，插件 `load` 时经 `ctx.tools.register` 挂进 ToolRegistry、`unload` 时注销；删除 `agent/tools/subjob/` 目录，`config.yml` 的 `tools` 列表移除 `subjob`（`plugins` 的 `max_depth` 配置不变，成为唯一声明处）。工具与插件仍经 `ctx.register("subjob")`/`ctx.invoke("subjob")` 交互，对外行为完全等价：schema、深度限制、job 树广播、结果回填全部不变。零 core 改动。
+
+### 变更
+- 变更：`plugins/subjob.py` 内新增 `SubJobTool`（自 `tools/subjob/` 原样迁入）；`SubJobPlugin.load` 注册工具（`ctx.tools.register(SubJobTool())`）并保存 ctx 引用、`unload` 注销（`ctx.tools.unregister("subjob")`）
+- 移除：`agent/tools/subjob/` 目录
+- 变更：`config.yml` `tools` 列表移除 `- subjob`（`plugins` 的 `- subjob: {max_depth: 2}` 保留）
+- 测试：`tests/scripts/test_subjob.py` import 路径改 `agent.plugins.subjob`；`tests/scripts/test_e2e.py` subjob 递归用例改为 `_make_loop([])` + 依赖插件 load 自动注册工具；存量回归全绿（subjob 6/6、e2e 11/11、followup 7/7、scene_registry 9/9、pause 7/7、cancel 3/3、reset 6/6、waterfall 15/15、turn_prompts 5/5）
+- 文档：`AGENTS.md` 分层描述、`docs/scene-extension.md` 说明场景使用 subjob 只需在 plugins 声明
+
+### 上下文
+- 影响范围：`agent/plugins/subjob.py`、`agent/tools/subjob/`（删除）、`config.yml`、`tests/scripts/test_subjob.py`、`tests/scripts/test_e2e.py`、`docs/CHANGELOG.md`、`AGENTS.md`、`docs/scene-extension.md`
+
 ## [unreleased] - 2026-09-01
 
 ### 核心摘要

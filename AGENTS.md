@@ -18,7 +18,7 @@
 - `message.py`：领域事件 → `OutputMessage` → `msg_output`（输出翻译唯一中枢）
 - `session.py`：会话数据（存取、压缩、LLM 消息组装），不发 `msg_output`；注册 `reset_session` 供 `ctx.invoke` 调用
 - `websocket.py` / `queue.py`：外部协议解析/序列化（信任边界），发 `msg_input`、消费 `msg_output`
-- `subjob.py`：子任务递归（独立 session_id 经 `msg_input` 建独立 job，结果经 `job_end` 回填）；注册 `ctx.subjob` 供 subjob 工具经 `ctx.invoke` 调用；job 树由插件自身经 `job_start`/`job_end` 维护
+- `subjob.py`：子任务递归（独立 session_id 经 `msg_input` 建独立 job，结果经 `job_end` 回填）；插件内定义 SubJob 工具入口（load 时注册进工具注册表，LLM 可直接调用；工具经 `ctx.invoke("subjob")` 与插件交互）；job 树由插件自身经 `job_start`/`job_end` 维护
 - `confirm.py`：通用确认通道（`confirm_request` serial 请求用户决策，超时按 deny 处理）
 - `tool_guard.py`：工具执行守卫（审查→确认→阻断，全在插件内闭环）
 - `cmd_pause.py`：job 暂停/恢复（复用 `turn_start`/`tools_start` 挂载点阻塞；与守卫链顺序由 plugins 配置顺序决定）
