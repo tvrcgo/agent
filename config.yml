@@ -36,7 +36,6 @@ tools:
   - glob
   - grep
   - shell
-  - subjob
   - websearch:
       search_url: http://searxng:8080
   - cloud_file:

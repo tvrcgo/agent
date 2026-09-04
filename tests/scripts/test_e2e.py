@@ -272,7 +272,7 @@ async def test_e2e_echo_tool() -> None:
 
 async def test_e2e_subjob_recursion() -> None:
     """父 job 触发 subjob 工具 → 子任务独立 session 运行 → 结果回填父工具。"""
-    loop = _make_loop(["subjob"])
+    loop = _make_loop([])
     fake = SubJobFake()
     loop._models.get = lambda scene: fake
 
@@ -284,7 +284,6 @@ async def test_e2e_subjob_recursion() -> None:
     session.load(loop.ctx, {"system_prompt_path": "nonexistent.md"})
     session._base_path = Path(tempfile.mkdtemp(prefix="e2e-session-"))
 
-    loop._tools.load_modules(loop._config.tools)
     from agent.plugins.subjob import SubJobPlugin
     subjob_plugin = SubJobPlugin()
     subjob_plugin.load(loop.ctx, {"max_depth": 2})

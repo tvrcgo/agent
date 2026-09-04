@@ -5,13 +5,65 @@ import logging
 import uuid
 from typing import TYPE_CHECKING
 
-from agent.core.plugin import Plugin
+from agent.core.events import Event
 from agent.core.io import InputMessage, OutputMessage
 from agent.core.loop import AgentContext, Job
-from agent.core.events import Event
+from agent.core.plugin import Plugin
+from agent.core.tool import Tool
 
 
 logger = logging.getLogger(__name__)
+
+
+class SubJobTool(Tool):
+    name = "subjob"
+    description = (
+        "Decompose a complex task into independent sub-jobs and execute "
+        "them in parallel (max 5 sub-jobs). Each sub-job runs independently "
+        "with full tool access. Results are aggregated and returned."
+    )
+    parameters = {
+        "type": "object",
+        "properties": {
+            "jobs": {
+                "type": "array",
+                "description": "List of independent sub-jobs to execute in parallel (max 5)",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "content": {
+                            "type": "string",
+                            "description": "Specific, self-contained job description",
+                        },
+                    },
+                    "required": ["content"],
+                },
+            },
+        },
+        "required": ["jobs"],
+    }
+
+    async def execute(self, arguments: dict, ctx: AgentContext, job: Job) -> str:
+        jobs_to_run = arguments.get("jobs", [])
+        if not jobs_to_run:
+            return "Error: no jobs provided"
+        if len(jobs_to_run) > 5:
+            return f"Error: at most 5 sub-jobs allowed, got {len(jobs_to_run)}"
+
+        async def run_one(j: dict, i: int) -> tuple[int, str, str]:
+            content = j.get("content", f"job-{i + 1}")
+            try:
+                future = await ctx.invoke("subjob", content=content, parent_job=job, ctx=ctx)
+            except KeyError:
+                return (i, content, "Error: subjob not available")
+            result = await future
+            return (i, content, result)
+
+        results = await asyncio.gather(*[run_one(j, i) for i, j in enumerate(jobs_to_run)])
+        results.sort(key=lambda x: x[0])
+
+        lines = [f"## Sub-job {i + 1}: {content}\n\n{result}" for i, content, result in results]
+        return "\n\n---\n\n".join(lines)
 
 
 class SubJobPlugin(Plugin):
@@ -24,8 +76,10 @@ class SubJobPlugin(Plugin):
         self._depth: dict[str, int] = {}
         self._parent: dict[str, str] = {}
         self._jobs: dict[str, Job] = {}
+        self._ctx: AgentContext | None = None
 
     def load(self, ctx: AgentContext, config: dict = {}) -> None:
+        self._ctx = ctx
         ctx.on("agent_start", self._on_agent_start)
         ctx.on("job_start", self._on_job_start)
         ctx.on("llm_end", self._send_jobs)
@@ -34,6 +88,7 @@ class SubJobPlugin(Plugin):
         ctx.on("job_end", self._on_job_end)
         ctx.on("turn_start", self._send_jobs)
         ctx.on("tools_start", self._send_jobs)
+        ctx.tools.register(SubJobTool())
         self._max_sub_job_depth = config.get("max_depth", 2)
         logger.info("SubJobPlugin initialized, max_depth=%d", self._max_sub_job_depth)
 
@@ -113,4 +168,6 @@ class SubJobPlugin(Plugin):
         return future
 
     def unload(self) -> None:
+        if self._ctx is not None:
+            self._ctx.tools.unregister("subjob")
         logger.info("SubJobPlugin shut down")

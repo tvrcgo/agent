@@ -13,7 +13,7 @@ class MockJob:
 
 
 async def test_empty_tasks():
-    from agent.tools.subjob import SubJobTool
+    from agent.plugins.subjob import SubJobTool
     from agent.core.loop import AgentContext
 
     tool = SubJobTool()
@@ -24,7 +24,7 @@ async def test_empty_tasks():
 
 
 async def test_no_subjob():
-    from agent.tools.subjob import SubJobTool
+    from agent.plugins.subjob import SubJobTool
     from agent.core.loop import AgentContext
 
     tool = SubJobTool()
@@ -35,7 +35,7 @@ async def test_no_subjob():
 
 
 async def test_result_aggregation():
-    from agent.tools.subjob import SubJobTool
+    from agent.plugins.subjob import SubJobTool
     from agent.core.loop import AgentContext
 
     ctx = AgentContext()
@@ -63,7 +63,7 @@ async def test_result_aggregation():
 
 
 async def test_too_many_jobs():
-    from agent.tools.subjob import SubJobTool
+    from agent.plugins.subjob import SubJobTool
     from agent.core.loop import AgentContext
 
     ctx = AgentContext()
@@ -84,7 +84,7 @@ async def test_too_many_jobs():
 
 async def test_max_depth_reached():
     """Subjob returns error when max depth is reached."""
-    from agent.tools.subjob import SubJobTool
+    from agent.plugins.subjob import SubJobTool
     from agent.core.io import InputMessage
     from agent.core.loop import AgentContext, Job
 
@@ -113,7 +113,7 @@ async def test_max_depth_reached():
 
 async def test_parallel_execution():
     """Multiple subjobs run in parallel and aggregate results."""
-    from agent.tools.subjob import SubJobTool
+    from agent.plugins.subjob import SubJobTool
     from agent.core.io import InputMessage
     from agent.core.loop import AgentContext, Job
 
