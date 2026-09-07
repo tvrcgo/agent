@@ -7,6 +7,7 @@
 - [单元测试 — MCP](cases/unit-mcp.md)
 - [单元测试 — SkillPlugin](cases/unit-skill.md)
 - [单元测试 — Follow-up 多轮输出](cases/unit-followup.md)
+- [单元测试 — Config / Model Provider](cases/unit-config.md)
 - [集成测试 — WebSocket 协议](cases/integration-ws.md)
 - [E2E — playground 全链路](cases/e2e-playground.md)
 
@@ -21,6 +22,7 @@
 - [test_reset.py](scripts/test_reset.py) — ctx.register/invoke（gRPC 风格，`register(name, fn)`）插件方法注册机制 + 会话重置插件单元测试（cmd_reset → 历史清空 + JSONL 删除 + 回执、在飞 job 取消、session_id 路由、未知会话 no-op、未加载 session 插件不崩）
 - [test_waterfall.py](scripts/test_waterfall.py) — waterfall/serial 事件分发 order 排序单元测试（顺序流水线、None 透传、order 排序——负数队头/0 即注册顺序/正数队尾/同值按注册序、serial 上 order 生效与短路交互、异常隔离、off 移除、serial/parallel 回归）
 - [test_turn_prompts.py](scripts/test_turn_prompts.py) — turn_start 提示段组装（waterfall）单元测试（注册顺序确定性组装、无技能/无贡献者、loop 落盘合并 system prompt）
+- [test_config.py](scripts/test_config.py) — model provider 配置单元测试（api_protocol 默认值与子类解析、base_url `${VAR}` 环境变量展开、未知协议快速失败、payload 结构、流式解析聚合）
 - [test_e2e.py](scripts/test_e2e.py) — 端到端集成测试（fake LLM，无网络依赖）
   - msg_input → LLM → 工具/subjob 递归 → msg_output 基础链路
   - 流式（llm_chunk → stream 消息）

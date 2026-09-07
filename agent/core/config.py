@@ -17,6 +17,7 @@ class ModelConfig(BaseModel):
 class ProviderConfig(BaseModel):
     base_url: str
     api_key: str = ""
+    api_protocol: str = "openai_completions"
     models: dict[str, ModelConfig] = {}
 
 

@@ -1,6 +1,23 @@
 # CHANGELOG
 > 新内容放前面，同一天内容合并；版本号和PR ID、Issue ID没有可省略
 
+## [unreleased] - 2026-09-07
+
+### 核心摘要
+model provider 配置的 base_url 支持从环境变量读（沿用 `${VAR}` 展开，与 api_key 同机制）：config.yml 中 deepseek 落位 `${DEEPSEEK_BASE_URL}`，`.env`（gitignore）追加默认值；新增 provider 配置项 `api_protocol`（默认 `openai_completions`），并把 `ModelProvider` 改为**通用基类**（HTTP 生命周期 + chat/chat_stream 调度骨架），每种协议一个实现子类（`OpenAICompletionsProvider`：端点路径、payload 构造、响应解析、流式解析与 tool_call 聚合），`ModelRegistry._provider_types` 按协议选择实现，未知协议在解析处 ValueError 快速失败。现有 openai_completions 请求/解析逻辑整体迁入子类，**行为等价**；扩展方式：新协议 = 新增子类 + 注册一行。
+
+### 变更
+- 新增：`core/config.py` `ProviderConfig.api_protocol: str = "openai_completions"`
+- 变更：`core/model.py` `ModelProvider` 通用基类化（`close`/`chat`/`chat_stream` 骨架 + `build_payload`/`parse_response`/`parse_stream` 抽象）；`OpenAICompletionsProvider` 子类承载原 chat 逻辑（payload/响应/流式聚合）
+- 变更：`core/model.py` `ModelRegistry._provider_types`（协议→子类）按 `api_protocol` 选实现，未知协议 `ValueError`
+- 变更：`config.yml` deepseek `base_url: ${DEEPSEEK_BASE_URL}`（从环境变量读；local 保持硬编码）
+- 测试：新增 `tests/scripts/test_config.py` 6 用例（协议默认值、base_url 环境变量展开、已知协议→子类、未知协议快速失败、payload 结构、流式聚合），6/6 通过；存量回归 turn_prompts 5/5 通过
+- 文档：`tests/README.md` 登记 test_config.py 与 unit-config.md
+
+### 上下文
+- 影响范围：`agent/core/config.py`、`agent/core/model.py`、`config.yml`、`tests/scripts/test_config.py`、`tests/cases/unit-config.md`、`tests/README.md`、`docs/CHANGELOG.md`
+- 部署侧：新环境 `.env` 需配置 `DEEPSEEK_BASE_URL`（缺失时与 api_key 缺失行为一致，运行期请求失败）
+
 ## [unreleased] - 2026-09-04
 
 ### 核心摘要
